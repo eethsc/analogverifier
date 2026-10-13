@@ -61,6 +61,7 @@ class LTspiceRunner:
                 var_name = m_ac.group(1).lower()
                 results[f"{var_name}_db"] = float(m_ac.group(2))
                 results[f"{var_name}_phase"] = float(m_ac.group(3))
+                results[var_name] = float(m_ac.group(2))
                 continue
 
             # Case 2: Measurement finding target AT coordinate (WHEN / TRIG-TARG):

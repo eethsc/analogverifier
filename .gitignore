@@ -43,3 +43,10 @@ venv.bak/
 *.ntvs*
 *.njsproj
 *.sln
+
+# SPICE Simulation outputs
+*.raw
+*.op.raw
+*.db
+generated_testbenches/*.log
+generated_netlists/temp_*.sub
