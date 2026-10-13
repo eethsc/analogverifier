@@ -1,0 +1,127 @@
+LTspice 24.1.10 for Windows
+Circuit: D:\Sera\Documents\2026-2\pre-capstone\Project2\testbenches_pmic\test_dropout.cir
+Start Time: Fri Oct  2 12:48:42 2026
+solver = Alternate
+Maximum thread count: 12
+tnom = 27
+temp = 27
+method = Gear
+Instance "x_pmic:M_bias_diode": Length shorter than recommended for a level 1 MOSFET.
+Instance "x_pmic:M_ea_tail": Length shorter than recommended for a level 1 MOSFET.
+Instance "x_pmic:M_ea_ref": Length shorter than recommended for a level 1 MOSFET.
+Instance "x_pmic:M_ea_fb": Length shorter than recommended for a level 1 MOSFET.
+Instance "x_pmic:M_en_p": Length shorter than recommended for a level 1 MOSFET.
+Instance "x_pmic:M_bg_l1": Length shorter than recommended for a level 1 MOSFET.
+Instance "x_pmic:M_bg_l2": Length shorter than recommended for a level 1 MOSFET.
+Instance "x_pmic:M_ea_l1": Length shorter than recommended for a level 1 MOSFET.
+Instance "x_pmic:M_ea_l2": Length shorter than recommended for a level 1 MOSFET.
+Instance "x_pmic:M_PASS": Length shorter than recommended for a level 1 MOSFET.
+Direct Newton iteration failed to find .op point.  (Use ".option noopiter" to skip.)
+Starting Gmin stepping
+Gmin = 10
+Gmin = 1.07374
+Gmin = 0.115292
+Gmin = 0.0123794
+Gmin = 0.00132923
+Gmin = 0.000142725
+Gmin = 1.5325e-05
+Gmin = 1.6455e-06
+Gmin = 1.76685e-07
+vernier = 0.5
+vernier = 0.25
+vernier = 0.125
+Gmin = 6.43289e-08
+vernier = 0.0625
+vernier = 0.03125
+vernier = 0.015625
+vernier = 0.0078125
+vernier = 0.00390625
+vernier = 0.00195312
+vernier = 0.000976562
+vernier = 0.000488281
+Gmin = 0
+Gmin stepping failed
+
+Starting source stepping with srcstepmethod=0
+Source Step = 3.0303%
+Source Step = 33.3333%
+Source Step = 63.6364%
+Source Step = 66.6785%
+Source Step = 66.7081%
+Source Step = 66.7377%
+Source Step = 66.7673%
+Source Step = 66.7969%
+vernier = 0.00146484
+Source Step = 66.8309%
+Source Step = 66.8753%
+Source Step = 66.9197%
+Source Step = 66.9641%
+Source Step = 67.0085%
+vernier = 0.00219727
+Source Step = 67.0573%
+Source Step = 67.1239%
+Source Step = 67.1905%
+Source Step = 67.257%
+Source Step = 67.3236%
+vernier = 0.0032959
+Source Step = 67.3935%
+Source Step = 67.4934%
+Source Step = 67.5933%
+Source Step = 67.6932%
+Source Step = 67.793%
+Source Step = 67.8929%
+vernier = 0.00494385
+Source Step = 68.0427%
+Source Step = 68.1925%
+Source Step = 68.3424%
+Source Step = 68.4922%
+Source Step = 68.642%
+vernier = 0.00741577
+Source Step = 68.8592%
+Source Step = 69.0839%
+Source Step = 69.3087%
+Source Step = 69.5334%
+Source Step = 69.7581%
+vernier = 0.0111237
+Source Step = 70.0727%
+Source Step = 70.4098%
+Source Step = 70.7469%
+Source Step = 71.0839%
+Source Step = 71.421%
+vernier = 0.0166855
+Source Step = 71.8761%
+Source Step = 72.3817%
+Source Step = 72.8873%
+Source Step = 73.3929%
+Source Step = 73.8986%
+vernier = 0.0250282
+Source Step = 74.5559%
+Source Step = 75.3143%
+Source Step = 76.0727%
+Source Step = 76.8312%
+Source Step = 77.5896%
+vernier = 0.0375423
+Source Step = 78.5376%
+Source Step = 79.6753%
+Source Step = 80.8129%
+Source Step = 81.9506%
+Source Step = 83.0882%
+vernier = 0.0563135
+Source Step = 84.4534%
+Source Step = 86.1599%
+Source Step = 87.8663%
+Source Step = 89.5728%
+Source Step = 91.2793%
+vernier = 0.0844703
+Source Step = 93.2417%
+Source Step = 95.8014%
+Source Step = 98.3611%
+Source stepping succeeded in finding the operating point.
+
+.step 
+Total elapsed time: 0.869 seconds.
+
+Files loaded:
+D:\Sera\Documents\2026-2\pre-capstone\Project2\testbenches_pmic\test_dropout.cir
+D:\Sera\Documents\2026-2\pre-capstone\Project2\models\ti_lp2985_transistor.sub
+

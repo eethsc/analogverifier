@@ -1,0 +1,64 @@
+LTspice 24.1.10 for Windows
+Circuit: D:\Sera\Documents\2026-2\pre-capstone\Project2\testbenches_pmic\test_line.cir
+Start Time: Fri Oct  2 12:47:13 2026
+solver = Alternate
+Maximum thread count: 12
+tnom = 27
+temp = 27
+method = Gear
+Instance "x_pmic:M_bias_diode": Length shorter than recommended for a level 1 MOSFET.
+Instance "x_pmic:M_ea_tail": Length shorter than recommended for a level 1 MOSFET.
+Instance "x_pmic:M_ea_ref": Length shorter than recommended for a level 1 MOSFET.
+Instance "x_pmic:M_ea_fb": Length shorter than recommended for a level 1 MOSFET.
+Instance "x_pmic:M_en_p": Length shorter than recommended for a level 1 MOSFET.
+Instance "x_pmic:M_bg_l1": Length shorter than recommended for a level 1 MOSFET.
+Instance "x_pmic:M_bg_l2": Length shorter than recommended for a level 1 MOSFET.
+Instance "x_pmic:M_ea_l1": Length shorter than recommended for a level 1 MOSFET.
+Instance "x_pmic:M_ea_l2": Length shorter than recommended for a level 1 MOSFET.
+Instance "x_pmic:M_PASS": Length shorter than recommended for a level 1 MOSFET.
+Direct Newton iteration failed to find .op point.  (Use ".option noopiter" to skip.)
+Starting Gmin stepping
+Gmin = 10
+Gmin = 1.07374
+vernier = 0.5
+Gmin = 0.247111
+vernier = 0.666667
+vernier = 0.888888
+Gmin = 0.051833
+vernier = 1
+Gmin = 0.006089
+Gmin = 0.000653801
+Gmin = 7.02013e-05
+Gmin = 7.53781e-06
+vernier = 0.5
+vernier = 0.666667
+Gmin = 2.63416e-06
+vernier = 0.333333
+vernier = 0.166667
+vernier = 0.222222
+Gmin = 2.1306e-06
+vernier = 0.296296
+vernier = 0.395061
+Gmin = 1.07386e-06
+vernier = 0.526748
+Gmin = 3.61237e-07
+vernier = 0.702331
+vernier = 0.936441
+Gmin = 6.43405e-08
+vernier = 1
+Gmin = 7.17881e-09
+Gmin = 7.70819e-10
+Gmin = 8.27661e-11
+Gmin = 8.88694e-12
+Gmin = 9.54228e-13
+Gmin = 1.02459e-13
+Gmin = 0
+Gmin stepping succeeded in finding the operating point.
+
+.step 
+Total elapsed time: 0.417 seconds.
+
+Files loaded:
+D:\Sera\Documents\2026-2\pre-capstone\Project2\testbenches_pmic\test_line.cir
+D:\Sera\Documents\2026-2\pre-capstone\Project2\models\ti_lp2985_transistor.sub
+

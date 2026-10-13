@@ -1,0 +1,81 @@
+Title: D:\Sera\Documents\2026-2\pre-capstone\Project2\test_transistor_ac.cir
+Date: Fri Oct  2 11:57:06 2026
+Plotname: Operating Point
+Flags: real
+No. Variables: 35
+No. Points:            1
+Offset:    0.0000000000000000e+00
+Command: Linear Technology Corporation LTspice -- Alternate Solver
+Backannotation: x1 3 2 7 4 6
+Variables:
+	0	V(2)	voltage
+	1	V(3)	voltage
+	2	V(4)	voltage
+	3	V(6)	voltage
+	4	V(7)	voltage
+	5	V(x1:11)	voltage
+	6	V(x1:12)	voltage
+	7	V(x1:13)	voltage
+	8	V(x1:14)	voltage
+	9	V(x1:15)	voltage
+	10	V(x1:16)	voltage
+	11	V(x1:17)	voltage
+	12	V(x1:18)	voltage
+	13	V(x1:19)	voltage
+	14	V(x1:20)	voltage
+	15	V(x1:21)	voltage
+	16	V(x1:22)	voltage
+	17	V(x1:23)	voltage
+	18	V(x1:24)	voltage
+	19	V(x1:25)	voltage
+	20	V(x1:26)	voltage
+	21	V(x1:27)	voltage
+	22	I(CL)	device_current
+	23	I(C_fb)	device_current
+	24	I(L_fb)	device_current
+	25	I(RL)	device_current
+	26	I(Vcc)	device_current
+	27	I(Vee)	device_current
+	28	I(Vin)	device_current
+	29	Ix(x1:2)	subckt_current
+	30	Ix(x1:3)	subckt_current
+	31	Ix(x1:4)	subckt_current
+	32	Ix(x1:6)	subckt_current
+	33	Ix(x1:7)	subckt_current
+	34	L_fb:flux	voltage
+Values:
+0		-2.429553849525272e-01
+	0.000000000000000e+00
+	-1.500000000000000e+01
+	-2.429554081193573e-01
+	1.500000000000000e+01
+	-7.381854118277402e-01
+	-8.595780624749847e-01
+	-1.412169540663150e+01
+	-1.383753717881277e+01
+	-1.473855662987971e+00
+	-1.474167594872595e+01
+	-1.474160956597091e+01
+	1.438113077450720e+01
+	-1.435732758385906e+01
+	-1.437427613932370e+01
+	8.208452989317363e-01
+	-1.498169937282666e+01
+	1.499948145075851e+01
+	-6.731321454957138e-01
+	-1.242964170863754e+00
+	1.032803505747516e-01
+	-5.282556134731631e-01
+	-2.429554081193573e-23
+	-2.429553849525272e-05
+	-2.316683008571233e-05
+	-1.214777040596786e-04
+	-7.262655612890979e+00
+	7.262925473819200e+00
+	-1.240876856658854e-04
+	1.128708409526240e-06
+	1.240876856658853e-04
+	-7.262925473819200e+00
+	1.446445341453895e-04
+	7.262655612890979e+00
+	-2.316683008571233e+03

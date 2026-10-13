@@ -1,0 +1,71 @@
+LTspice 24.1.10 for Windows
+Circuit: D:\Sera\Documents\2026-2\pre-capstone\Project2\testbenches_pmic\tb_pmic_transient.cir
+Start Time: Fri Oct  2 13:12:08 2026
+Options: gmin=1e-11 cshunt=1e-15 noopiter
+solver = Alternate
+Maximum thread count: 12
+tnom = 27
+temp = 27
+method = Gear
+gmin = 1e-11
+noOpIter = true
+Instance "x_pmic:M_bias_diode": Length shorter than recommended for a level 1 MOSFET.
+Instance "x_pmic:M_ea_tail": Length shorter than recommended for a level 1 MOSFET.
+Instance "x_pmic:M_ea_ref": Length shorter than recommended for a level 1 MOSFET.
+Instance "x_pmic:M_ea_fb": Length shorter than recommended for a level 1 MOSFET.
+Instance "x_pmic:M_en_p": Length shorter than recommended for a level 1 MOSFET.
+Instance "x_pmic:M_bg_l1": Length shorter than recommended for a level 1 MOSFET.
+Instance "x_pmic:M_bg_l2": Length shorter than recommended for a level 1 MOSFET.
+Instance "x_pmic:M_ea_l1": Length shorter than recommended for a level 1 MOSFET.
+Instance "x_pmic:M_ea_l2": Length shorter than recommended for a level 1 MOSFET.
+Instance "x_pmic:M_PASS": Length shorter than recommended for a level 1 MOSFET.
+Direct Newton iteration for .op point skipped.
+Starting Gmin stepping
+Gmin = 10
+Gmin = 1.07374
+Gmin = 0.115292
+Gmin = 0.0123794
+Gmin = 0.00132923
+Gmin = 0.000142725
+Gmin = 1.5325e-05
+vernier = 0.5
+vernier = 0.25
+Gmin = 4.46372e-06
+vernier = 0.125
+vernier = 0.0625
+Gmin = 3.88777e-06
+vernier = 0.0833333
+vernier = 0.111111
+Gmin = 3.07875e-06
+vernier = 0.148148
+vernier = 0.197531
+Gmin = 2.12786e-06
+vernier = 0.263374
+Gmin = 1.19687e-06
+vernier = 0.351165
+vernier = 0.46822
+Gmin = 4.63954e-07
+vernier = 0.624294
+vernier = 0.832392
+Gmin = 1.06711e-07
+vernier = 1
+Gmin = 1.31323e-08
+Gmin = 1.41007e-09
+Gmin = 1.51405e-10
+Gmin = 1.6257e-11
+Gmin = 1.74558e-12
+Gmin = 0
+Gmin stepping succeeded in finding the operating point.
+
+Total elapsed time: 0.817 seconds.
+
+Files loaded:
+D:\Sera\Documents\2026-2\pre-capstone\Project2\testbenches_pmic\tb_pmic_transient.cir
+D:\Sera\Documents\2026-2\pre-capstone\Project2\models\ti_lp2985_transistor.sub
+
+v_base: AVG(V(out_load))=3.30084514618 FROM 5e-06 TO 9.9e-06
+v_dip: MIN(V(out_load))=3.24250388145 FROM 1e-05 TO 3e-05
+tran_undershoot_mv: (v_base - v_dip) * 1e3=58.3412647248
+t_settle_hit: V(out_load)=3.267 AT 1.1358319468e-05
+t_settle_rec: V(out_load)=3.267 AT 1.41505969557e-05
+tran_settle_us: (t_settle_rec - 10u) * 1e6=4.1505969557

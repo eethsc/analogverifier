@@ -1,0 +1,65 @@
+Title: D:\Sera\Documents\2026-2\pre-capstone\Project2\testbenches\tb_ac_openloop.cir
+Date: Fri Oct  2 11:56:58 2026
+Plotname: Operating Point
+Flags: real
+No. Variables: 27
+No. Points:            1
+Offset:    0.0000000000000000e+00
+Command: Linear Technology Corporation LTspice -- Alternate Solver
+Backannotation: x1 1 2 3 4 5
+Variables:
+	0	V(in_m)	voltage
+	1	V(in_p)	voltage
+	2	V(out)	voltage
+	3	V(vcc)	voltage
+	4	V(vee)	voltage
+	5	V(x1:11)	voltage
+	6	V(x1:20)	voltage
+	7	V(x1:21)	voltage
+	8	V(x1:22)	voltage
+	9	V(x1:30)	voltage
+	10	V(x1:40)	voltage
+	11	V(x1:41)	voltage
+	12	V(x1:50)	voltage
+	13	V(x1:60)	voltage
+	14	I(CL)	device_current
+	15	I(C_fb)	device_current
+	16	I(L_fb)	device_current
+	17	I(RL)	device_current
+	18	I(Vcc)	device_current
+	19	I(Vee)	device_current
+	20	I(Vin)	device_current
+	21	Ix(x1:1)	subckt_current
+	22	Ix(x1:2)	subckt_current
+	23	Ix(x1:3)	subckt_current
+	24	Ix(x1:4)	subckt_current
+	25	Ix(x1:5)	subckt_current
+	26	L_fb:flux	voltage
+Values:
+0		-1.000027240446443e-03
+	0.000000000000000e+00
+	-1.000027270451180e-03
+	1.500000000000000e+01
+	-1.500000000000000e+01
+	-1.000000000000000e-03
+	-3.162321070932248e-08
+	0.000000000000000e+00
+	0.000000000000000e+00
+	-1.039778648422046e-03
+	-1.039778648422046e-03
+	-1.039778648422046e-03
+	-1.039778648422046e-03
+	-1.039778648422046e-03
+	-1.000027270451180e-25
+	-1.000027240446443e-07
+	-3.000473771942347e-08
+	-5.000136352255902e-07
+	-1.700000000000000e-03
+	1.700000000000000e-03
+	-8.999801362022322e-08
+	8.999801362022322e-08
+	6.999798632529589e-08
+	1.700000000000000e-03
+	-1.700000000000000e-03
+	5.300183729448828e-07
+	-3.000473771942347e+00

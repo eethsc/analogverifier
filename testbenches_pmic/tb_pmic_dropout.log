@@ -1,0 +1,185 @@
+LTspice 24.1.10 for Windows
+Circuit: D:\Sera\Documents\2026-2\pre-capstone\Project2\testbenches_pmic\tb_pmic_dropout.cir
+Start Time: Fri Oct  2 13:11:55 2026
+Options: gmin=1e-11 cshunt=1e-15 noopiter
+solver = Alternate
+Maximum thread count: 12
+tnom = 27
+temp = 27
+method = Gear
+gmin = 1e-11
+noOpIter = true
+Instance "x_pmic_150:M_bias_diode": Length shorter than recommended for a level 1 MOSFET.
+Instance "x_pmic_150:M_ea_tail": Length shorter than recommended for a level 1 MOSFET.
+Instance "x_pmic_150:M_ea_ref": Length shorter than recommended for a level 1 MOSFET.
+Instance "x_pmic_150:M_ea_fb": Length shorter than recommended for a level 1 MOSFET.
+Instance "x_pmic_150:M_en_p": Length shorter than recommended for a level 1 MOSFET.
+Instance "x_pmic_150:M_bg_l1": Length shorter than recommended for a level 1 MOSFET.
+Instance "x_pmic_150:M_bg_l2": Length shorter than recommended for a level 1 MOSFET.
+Instance "x_pmic_150:M_ea_l1": Length shorter than recommended for a level 1 MOSFET.
+Instance "x_pmic_150:M_ea_l2": Length shorter than recommended for a level 1 MOSFET.
+Instance "x_pmic_150:M_PASS": Length shorter than recommended for a level 1 MOSFET.
+Instance "x_pmic_50:M_bias_diode": Length shorter than recommended for a level 1 MOSFET.
+Instance "x_pmic_50:M_ea_tail": Length shorter than recommended for a level 1 MOSFET.
+Instance "x_pmic_50:M_ea_ref": Length shorter than recommended for a level 1 MOSFET.
+Instance "x_pmic_50:M_ea_fb": Length shorter than recommended for a level 1 MOSFET.
+Instance "x_pmic_50:M_en_p": Length shorter than recommended for a level 1 MOSFET.
+Instance "x_pmic_50:M_bg_l1": Length shorter than recommended for a level 1 MOSFET.
+Instance "x_pmic_50:M_bg_l2": Length shorter than recommended for a level 1 MOSFET.
+Instance "x_pmic_50:M_ea_l1": Length shorter than recommended for a level 1 MOSFET.
+Instance "x_pmic_50:M_ea_l2": Length shorter than recommended for a level 1 MOSFET.
+Instance "x_pmic_50:M_PASS": Length shorter than recommended for a level 1 MOSFET.
+Instance "x_pmic_1:M_bias_diode": Length shorter than recommended for a level 1 MOSFET.
+Instance "x_pmic_1:M_ea_tail": Length shorter than recommended for a level 1 MOSFET.
+Instance "x_pmic_1:M_ea_ref": Length shorter than recommended for a level 1 MOSFET.
+Instance "x_pmic_1:M_ea_fb": Length shorter than recommended for a level 1 MOSFET.
+Instance "x_pmic_1:M_en_p": Length shorter than recommended for a level 1 MOSFET.
+Instance "x_pmic_1:M_bg_l1": Length shorter than recommended for a level 1 MOSFET.
+Instance "x_pmic_1:M_bg_l2": Length shorter than recommended for a level 1 MOSFET.
+Instance "x_pmic_1:M_ea_l1": Length shorter than recommended for a level 1 MOSFET.
+Instance "x_pmic_1:M_ea_l2": Length shorter than recommended for a level 1 MOSFET.
+Instance "x_pmic_1:M_PASS": Length shorter than recommended for a level 1 MOSFET.
+Direct Newton iteration for .op point skipped.
+Starting Gmin stepping
+Gmin = 10
+Gmin = 1.07374
+Gmin = 0.115292
+Gmin = 0.0123794
+Gmin = 0.00132923
+Gmin = 0.000142725
+Gmin = 1.5325e-05
+Gmin = 1.6455e-06
+vernier = 0.5
+Gmin = 3.40827e-07
+vernier = 0.25
+vernier = 0.333333
+vernier = 0.166667
+Gmin = 2.50929e-07
+vernier = 0.0833333
+vernier = 0.0416667
+vernier = 0.0208333
+vernier = 0.0104167
+Gmin = 2.54062e-07
+vernier = 0.00520833
+vernier = 0.00260417
+vernier = 0.00130208
+vernier = 0.000651042
+Gmin = 2.54558e-07
+vernier = 0.000488281
+Gmin = 0
+Gmin stepping failed
+
+Starting source stepping with srcstepmethod=0
+Source Step = 3.0303%
+Source Step = 33.3333%
+Source Step = 63.6364%
+Source Step = 64.2519%
+Source Step = 64.7254%
+Source Step = 65.1989%
+Source Step = 65.6723%
+Source Step = 66.1458%
+vernier = 0.0234375
+Source Step = 66.714%
+Source Step = 67.4242%
+Source Step = 68.1345%
+Source Step = 68.8447%
+Source Step = 69.5549%
+vernier = 0.0351562
+Source Step = 70.3717%
+Source Step = 71.437%
+Source Step = 72.5024%
+Source Step = 73.5677%
+Source Step = 74.633%
+vernier = 0.0527344
+Source Step = 75.8049%
+Source Step = 77.4029%
+Source Step = 79.0009%
+Source Step = 80.599%
+Source Step = 82.197%
+vernier = 0.0791016
+Source Step = 83.8749%
+Source Step = 86.2719%
+Source Step = 88.6689%
+Source Step = 91.0659%
+Source Step = 93.4629%
+Source Step = 95.86%
+vernier = 0.118652
+Source Step = 99.4555%
+Source stepping succeeded in finding the operating point.
+
+Direct Newton iteration for .op point skipped.
+Starting Gmin stepping
+Gmin = 10
+Gmin = 1.07374
+vernier = 0.5
+vernier = 0.25
+vernier = 0.125
+vernier = 0.0625
+vernier = 0.03125
+vernier = 0.015625
+Gmin = 0.549756
+vernier = 0.0078125
+vernier = 0.00390625
+vernier = 0.00195312
+vernier = 0.000976562
+vernier = 0.000488281
+Gmin = 0
+Gmin stepping failed
+
+Starting source stepping with srcstepmethod=0
+Source Step = 3.0303%
+Source Step = 33.3333%
+Source Step = 63.6364%
+Source Step = 93.9394%
+Source stepping succeeded in finding the operating point.
+
+Direct Newton iteration for .op point skipped.
+Starting Gmin stepping
+Gmin = 10
+Gmin = 1.07374
+Gmin = 0.115292
+Gmin = 0.0123794
+Gmin = 0.00132923
+Gmin = 0.000142725
+Gmin = 1.5325e-05
+vernier = 0.5
+vernier = 0.25
+Gmin = 3.21388e-06
+vernier = 0.125
+vernier = 0.0625
+vernier = 0.03125
+vernier = 0.015625
+vernier = 0.0078125
+vernier = 0.00390625
+vernier = 0.00195312
+vernier = 0.000976562
+vernier = 0.000488281
+Gmin = 0
+Gmin = 0
+Gmin stepping failed
+
+Starting source stepping with srcstepmethod=0
+Source Step = 3.0303%
+Source Step = 33.3333%
+Source Step = 58.3333%
+Source Step = 65.9091%
+Source Step = 73.4848%
+Source Step = 81.0606%
+Source Step = 88.6364%
+Source Step = 96.2121%
+vernier = 0.375
+Source stepping succeeded in finding the operating point.
+
+.step 
+Total elapsed time: 2.277 seconds.
+
+Files loaded:
+D:\Sera\Documents\2026-2\pre-capstone\Project2\testbenches_pmic\tb_pmic_dropout.cir
+D:\Sera\Documents\2026-2\pre-capstone\Project2\models\ti_lp2985_transistor.sub
+
+vin_150: V(out_load_150)=3.20 AT 3.46332924825
+vin_50: V(out_load_50)=3.20 AT 3.28796376096
+vin_1: V(out_load_1)=3.20 AT 3.20177912413
+vdo_150ma_mv: (vin_150 - 3.20) * 1e3=263.329248252
+vdo_50ma_mv: (vin_50  - 3.20) * 1e3=87.9637609589
+vdo_1ma_mv: (vin_1   - 3.20) * 1e3=1.77912412938

@@ -1,0 +1,57 @@
+Title: D:\Sera\Documents\2026-2\pre-capstone\Project2\testbenches\tb_slew_rate.cir
+Date: Fri Oct  2 11:57:00 2026
+Plotname: Operating Point
+Flags: real
+No. Variables: 23
+No. Points:            1
+Offset:    0.0000000000000000e+00
+Command: Linear Technology Corporation LTspice -- Alternate Solver
+Backannotation: x1 1 2 3 4 5
+Variables:
+	0	V(in_p)	voltage
+	1	V(out)	voltage
+	2	V(vcc)	voltage
+	3	V(vee)	voltage
+	4	V(x1:11)	voltage
+	5	V(x1:20)	voltage
+	6	V(x1:21)	voltage
+	7	V(x1:22)	voltage
+	8	V(x1:30)	voltage
+	9	V(x1:40)	voltage
+	10	V(x1:41)	voltage
+	11	V(x1:50)	voltage
+	12	V(x1:60)	voltage
+	13	I(CL)	device_current
+	14	I(RL)	device_current
+	15	I(Vcc)	device_current
+	16	I(Vee)	device_current
+	17	I(Vin)	device_current
+	18	Ix(x1:1)	subckt_current
+	19	Ix(x1:2)	subckt_current
+	20	Ix(x1:3)	subckt_current
+	21	Ix(x1:4)	subckt_current
+	22	Ix(x1:5)	subckt_current
+Values:
+0		-1.000000000000000e+01
+	-1.000127252658710e+01
+	1.500000000000000e+01
+	-1.500000000000000e+01
+	-1.000100000000000e+01
+	-3.162637318041540e-04
+	0.000000000000000e+00
+	0.000000000000000e+00
+	-1.037631650674474e+01
+	-1.037631650674474e+01
+	-1.037631650674474e+01
+	-1.037631650674474e+01
+	-1.037631650674474e+01
+	-1.000127252658710e-21
+	-5.000636263293550e-03
+	-1.700000000000000e-03
+	1.700000000000000e-03
+	-7.013426329354991e-08
+	7.013426329354991e-08
+	4.986119165327589e-08
+	1.700000000000000e-03
+	-1.700000000000000e-03
+	5.000586402101896e-03
