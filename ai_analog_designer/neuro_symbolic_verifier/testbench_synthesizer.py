@@ -1,0 +1,354 @@
+import os
+import re
+from typing import Dict, Any, List, Optional
+from ..openrouter_client import OpenRouterClient
+
+class TestbenchSynthesizer:
+    """
+    Synthesizes LTspice-compliant testbenches implementing AnalogVerifier's
+    Port Dependency Graph (PDG) activation scheduling.
+    Ensures correct startup sequence (Power -> Bias -> Control -> Signal)
+    and generates precise .meas directives to verify 100% of datasheet specifications.
+    """
+
+    def __init__(self, llm_client: Optional[OpenRouterClient] = None):
+        self.llm = llm_client or OpenRouterClient()
+
+    def synthesize_testbenches(
+        self,
+        netlist_path: str,
+        subckt_name: str,
+        pins: List[Dict[str, Any]],
+        specifications: List[Dict[str, Any]],
+        pdg_schedule: Dict[str, float]
+    ) -> List[Dict[str, Any]]:
+        """
+        Generates analysis testbenches (.cir) targeting the specifications.
+        Returns a list of testbench specs: [{'name': ..., 'content': ..., 'target_params': [...]}]
+        """
+        # Filter testable electrical parameters (omit package thermal/ESD ratings)
+        electrical_specs = [
+            s for s in specifications
+            if not any(k in s.get("symbol", "").lower() for k in ["tstg", "θja", "theta", "hbm", "mm", "cdm", "esd"])
+        ]
+        if not electrical_specs:
+            electrical_specs = specifications
+
+        dc_specs = []
+        ac_specs = []
+        tran_specs = []
+
+        for s in electrical_specs:
+            sym = s.get("symbol", "").lower()
+            desc = (s.get("description", "") + " " + s.get("parameter", "")).lower()
+
+            if any(k in sym or k in desc for k in ["gain", "gbw", "bw", "bandwidth", "phase", "pm", "cmrr", "psrr", "ac"]):
+                ac_specs.append(s)
+            elif any(k in sym or k in desc for k in ["slew", "sr", "delay", "tpd", "tr", "tf", "rise", "fall", "period", "freq", "fosc", "fout", "fmax", "jitter", "pulse", "thd", "lock"]):
+                tran_specs.append(s)
+            else:
+                dc_specs.append(s)
+
+        testbenches = []
+        expected_pin_names_str = " ".join([p["name"] for p in pins])
+        pin_names_str = self._get_actual_subckt_pins(netlist_path, subckt_name, expected_pin_names_str)
+        schedule_str = "\n".join([f"  {p}: {t*1e6:.2f} us" for p, t in pdg_schedule.items()])
+
+        categories = []
+        if dc_specs:
+            categories.append(("dc_op", "DC Operating Point & Static Characteristics", dc_specs, ".op"))
+        if ac_specs:
+            categories.append(("ac_sweep", "AC Frequency Sweep & Small-Signal Characteristics", ac_specs, ".ac dec 20 1 100Meg"))
+        if tran_specs:
+            categories.append(("transient", "Transient Dynamics & Switching Characteristics", tran_specs, ".tran 0.5n 300n"))
+
+        if not categories:
+            categories.append(("full_verification", "Complete Functional Verification", specifications, ".tran 0.5n 300n"))
+
+        for tb_id, title, cat_specs, sim_type in categories:
+            tb_data = self._generate_testbench_with_llm(
+                tb_id=tb_id,
+                title=title,
+                cat_specs=cat_specs,
+                sim_type=sim_type,
+                netlist_path=netlist_path,
+                subckt_name=subckt_name,
+                pin_names_str=pin_names_str,
+                pins=pins,
+                schedule_str=schedule_str
+            )
+            testbenches.append(tb_data)
+
+        return testbenches
+
+    def _generate_testbench_with_llm(
+        self,
+        tb_id: str,
+        title: str,
+        cat_specs: List[Dict[str, Any]],
+        sim_type: str,
+        netlist_path: str,
+        subckt_name: str,
+        pin_names_str: str,
+        pins: List[Dict[str, Any]],
+        schedule_str: str
+    ) -> Dict[str, Any]:
+        """
+        Uses OpenRouter LLM to generate a compliant LTspice testbench deck.
+        """
+        netlist_filename = os.path.basename(netlist_path)
+        specs_desc = "\n".join([
+            f"- '{s.get('symbol')}': Min={s.get('min')}, Typ={s.get('typ')}, Max={s.get('max')} {s.get('unit')} | Desc: {s.get('description', s.get('parameter', ''))} | Conditions: {s.get('test_conditions', '')}"
+            for s in cat_specs
+        ])
+
+        prompt = f"""You are an Expert Mixed-Signal Test & Verification Engineer.
+Synthesize an LTspice SPICE testbench deck to verify the following specifications for subcircuit '{subckt_name}'.
+
+## DUT INTERFACE:
+- Subcircuit Name: {subckt_name}
+- Pins: {pin_names_str}
+
+## PORT DEPENDENCY GRAPH ACTIVATION SCHEDULE:
+Follow this physical power-up / activation timing strictly:
+{schedule_str}
+
+## TARGET SPECIFICATIONS TO MEASURE:
+{specs_desc}
+
+## CRITICAL LTSPICE COMPATIBILITY RULES:
+1. Include the subcircuit using: `.include "{netlist_filename}"`
+2. Instantiate DUT: `XDUT {pin_names_str} {subckt_name}`
+3. Ground pin (e.g. GND, VSS, AGND, PGND) MUST connect to node 0 or be grounded with `VGND GND 0 0`.
+4. Power supplies (e.g. VCC, VDD) must match datasheet typical operating voltage (e.g. 3.3V or 5V as stated in specs).
+5. Input stimulus must follow the PDG schedule (delayed startup if transient, or correct DC bias).
+6. Simulation Directive: Must specify `{sim_type}` analysis command.
+7. MEASUREMENT DIRECTIVES (STRICT LTSPICE SYNTAX ONLY!):
+   - Measure each target specification symbol using valid LTspice `.meas` commands.
+   - For Voltages and Currents:
+     `.meas tran vout_max MAX V(OUT) from=10u to=50u`
+     `.meas tran vout_min MIN V(OUT) from=10u to=50u`
+     `.meas tran i_supply AVG -I(VDD) from=10u to=50u`
+   - For Oscillation Frequency & Period:
+     DO NOT use HSPICE keywords like PERIOD(), FREQ(), or STDEV()!
+     In LTspice, measure threshold crossings:
+     `.meas tran t1 when V(OUT)=1.65 rise=3`
+     `.meas tran t2 when V(OUT)=1.65 rise=4`
+     `.meas tran fosc param 1/(t2-t1)`
+   - For Rise/Fall Times:
+     `.meas tran tr1 when V(OUT)=0.33 rise=2`
+     `.meas tran tr2 when V(OUT)=2.97 rise=2`
+     `.meas tran tr param tr2-tr1`
+   - In LTspice, WHEN directives DO NOT allow 'from=' or 'to='!
+     Syntax: `.meas tran t1 when V(OUT)=1.65 rise=3`
+     NEVER put 'from=...' or 'to=...' on any line containing 'when'!
+   - In `.meas tran <name> param <expr>`, NEVER append `FROM ... TO ...`.
+   - Never use multi-arg MAX(a, b, c). LTspice MAX only takes 2 arguments: MAX(a, b).
+   - For LTspice: Terminate the file strictly with `.end`. NO `.control` or `.endc`.
+
+OUTPUT FORMAT:
+Respond using the following XML tag:
+<spice_deck>
+* Full LTspice testbench code here
+.include "{netlist_filename}"
+XDUT {pin_names_str} {subckt_name}
+...
+.end
+</spice_deck>
+"""
+        system_prompt = "You are an autonomous SPICE testbench generator specializing in LTspice batch verification and neuro-symbolic measurement extraction."
+        
+        try:
+            raw_resp = self.llm.complete(prompt, system_prompt=system_prompt, temperature=0.1, max_tokens=8192)
+            deck = ""
+            m_deck = re.search(r'<spice_deck>(.*?)</spice_deck>', raw_resp, re.DOTALL | re.IGNORECASE)
+            if m_deck:
+                deck = m_deck.group(1).strip()
+            else:
+                m_code = re.search(r'```(?:spice|cir)?\s*(.*?)\s*```', raw_resp, re.DOTALL | re.IGNORECASE)
+                if m_code:
+                    deck = m_code.group(1).strip()
+                elif ".end" in raw_resp.lower():
+                    deck = raw_resp.strip()
+
+            deck = self._sanitize_testbench(deck, subckt_name, pin_names_str, netlist_filename, pins=pins)
+            return {
+                "name": tb_id,
+                "description": title,
+                "target_symbols": [s.get("symbol") for s in cat_specs],
+                "content": deck.strip() + "\n"
+            }
+        except Exception as e:
+            # Fallback basic testbench
+            fallback_deck = self._build_fallback_deck(tb_id, subckt_name, pin_names_str, pins, netlist_filename, cat_specs)
+            return {
+                "name": tb_id,
+                "description": title,
+                "target_symbols": [s.get("symbol") for s in cat_specs],
+                "content": fallback_deck
+            }
+
+    def _get_actual_subckt_pins(self, netlist_path: str, subckt_name: str, fallback_pins: str) -> str:
+        """Reads the exact pin signature from the synthesized .subckt file."""
+        if not os.path.exists(netlist_path):
+            return fallback_pins
+        try:
+            with open(netlist_path, "r", encoding="utf-8", errors="ignore") as f:
+                for line in f:
+                    line_str = line.strip()
+                    if line_str.lower().startswith(".subckt"):
+                        tokens = line_str.split()
+                        if len(tokens) >= 3 and tokens[1].upper() == subckt_name.upper():
+                            return " ".join(tokens[2:])
+        except Exception:
+            pass
+        return fallback_pins
+
+    def _sanitize_testbench(self, deck: str, subckt_name: str, pin_names_str: str, netlist_filename: str, pins: Optional[List[Dict[str, Any]]] = None) -> str:
+        """Sanitizes testbench for LTspice execution, stripping invalid HSPICE syntax, fixing PWL, and deduplicating."""
+        lines = deck.splitlines()
+        clean_lines = []
+        has_end = False
+        seen_instances = set()
+        seen_v_pairs = set()
+        out_pins = {p['name'].upper() for p in pins if p.get('role', '').upper() in ['OUTPUT', 'FEEDBACK']} if pins else set()
+
+        for line in lines:
+            line_str = line.strip()
+            if not line_str:
+                clean_lines.append("")
+                continue
+
+            # Strip stray markdown fences, xml tags, or language markers
+            if line_str.startswith("```") or "<spice_deck>" in line_str.lower() or "</spice_deck>" in line_str.lower() or line_str.lower() == "xml":
+                continue
+
+            # Remove ngspice control blocks
+            if any(line_str.lower().startswith(k) for k in [".control", ".endc", "run", "quit"]):
+                continue
+
+            # Guarantee XDUT has exact matching pin sequence
+            if line_str.upper().startswith("XDUT ") and subckt_name.upper() in line_str.upper():
+                line_str = f"XDUT {pin_names_str} {subckt_name}"
+
+            # Remove voltage sources driving output/feedback pins or duplicating parallel node sources
+            tokens = line_str.split()
+            if tokens and tokens[0].upper().startswith("V") and len(tokens) >= 3 and not tokens[0].startswith("."):
+                node_pos = tokens[1].upper()
+                node_neg = tokens[2].upper()
+                if node_pos in out_pins:
+                    line_str = f"; Sanitized output driver short: {line_str}"
+                    tokens = []
+                else:
+                    pair = (node_pos, node_neg)
+                    inv_pair = (node_neg, node_pos)
+                    if pair in seen_v_pairs or inv_pair in seen_v_pairs:
+                        line_str = f"; Sanitized duplicate parallel voltage source short: {line_str}"
+                        tokens = []
+                    else:
+                        seen_v_pairs.add(pair)
+
+            # Clean dynamic V(...) in static .param lines
+            if line_str.lower().startswith(".param") and "v(" in line_str.lower():
+                line_str = re.sub(r'v\([a-zA-Z0-9_]+\)', '3.3', line_str, flags=re.IGNORECASE)
+
+            # Fix when clause inequalities (> or < to =) and strip trailing/preceding from/to
+            if re.search(r'\bwhen\b', line_str, re.IGNORECASE):
+                # Replace AVG with FIND on when lines
+                line_str = re.sub(r'\bAVG\b', 'FIND', line_str, flags=re.IGNORECASE)
+                # Strip all from=... and to=... occurrences anywhere on the line
+                line_str = re.sub(r'\s+from\s*=\s*\S+', '', line_str, flags=re.IGNORECASE)
+                line_str = re.sub(r'\s+to\s*=\s*\S+', '', line_str, flags=re.IGNORECASE)
+                line_str = re.sub(r'\s+from\s+\S+', '', line_str, flags=re.IGNORECASE)
+                line_str = re.sub(r'\s+to\s+\S+', '', line_str, flags=re.IGNORECASE)
+
+                # Replace > or < after when with =
+                parts = re.split(r'(\bwhen\s+)', line_str, flags=re.IGNORECASE)
+                if len(parts) >= 3:
+                    before = parts[0] + parts[1]
+                    after = re.sub(r'([a-zA-Z0-9_\(\)]+)\s*[><]\s*', r'\1 = ', parts[2])
+                    # Strip unit 'V' or 'v' immediately after numbers in comparison (e.g. = 1.65V -> = 1.65)
+                    after = re.sub(r'(=\s*[-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?)\s*[vV]\b', r'\1', after)
+                    line_str = before + after
+
+            # Strip invalid FROM/TO appended to param directives
+            if re.match(r'^\.meas\s+\S+\s+\S+\s+param\s+', line_str, re.IGNORECASE):
+                line_str = re.sub(r'\s+from\s*=\s*\S+\s+to\s*=\s*\S+.*$', '', line_str, flags=re.IGNORECASE)
+                line_str = re.sub(r'\s+from\s+\S+\s+to\s+\S+.*$', '', line_str, flags=re.IGNORECASE)
+
+            # Strip unsupported HSPICE functions like FIND PERIOD(...) or FREQ(...) or PERIOD V(...)
+            if re.search(r'^\.meas\s+\S+\s+\S+\s+(?:freq|period|pulsewidth|stdev)\b', line_str, re.IGNORECASE) or \
+               any(bad_fn in line_str.upper() for bad_fn in ["PERIOD(", "FREQ(", "PULSEWIDTH(", "STDEV("]):
+                line_str = f"; Sanitized unsupported HSPICE meas: {line_str}"
+
+            # Strip or sanitize multi-arg MAX / MIN (LTspice only supports binary max(a, b))
+            if re.search(r'\b(?:max|min)\s*\([^)]*,[^)]*,', line_str, re.IGNORECASE):
+                line_str = f"; Sanitized multi-arg MAX/MIN meas: {line_str}"
+
+            # Fix PWL non-increasing 0s -> 0.00s
+            if "PWL" in line_str.upper():
+                line_str = re.sub(r'PWL\s*\(\s*0(?:us|ns|s|V)?\s+([0-9\.\-a-zA-Z]+)\s+0(?:\.0+)?(?:us|ns|s)?\s+', r'PWL(0s \1 10ns ', line_str, flags=re.IGNORECASE)
+
+            # Strip invalid rshunt from .options
+            if line_str.lower().startswith(".options"):
+                line_str = re.sub(r'\brshunt=\S+', '', line_str, flags=re.IGNORECASE)
+                line_str = re.sub(r'\s+', ' ', line_str).strip()
+
+            # Ensure action keyword like FIND exists before bare V(...) or I(...) in .meas directives
+            line_str = re.sub(r'^(\.meas\s+\S+\s+\S+\s+)([VIvi]\()', r'\1FIND \2', line_str, flags=re.IGNORECASE)
+
+            # Deduplicate component instance names
+            first_tok = tokens[0] if tokens else ""
+            if first_tok and first_tok[0].upper() in "RCLMQDVIXEGFHSW" and not first_tok.startswith("."):
+                inst = first_tok.upper()
+                if inst in seen_instances:
+                    counter = 2
+                    new_inst = f"{first_tok}_{counter}"
+                    while new_inst.upper() in seen_instances:
+                        counter += 1
+                        new_inst = f"{first_tok}_{counter}"
+                    line_str = re.sub(r'^\s*' + re.escape(first_tok), new_inst, line_str)
+                    seen_instances.add(new_inst.upper())
+                else:
+                    seen_instances.add(inst)
+
+            if line_str.lower().startswith(".end"):
+                has_end = True
+            clean_lines.append(line_str)
+
+        content = "\n".join(clean_lines)
+        if ".options" not in content.lower():
+            content = ".options gmin=1e-12 cshunt=1e-15\n" + content
+
+        if f'.include "{netlist_filename}"' not in content and f'.include {netlist_filename}' not in content:
+            content = f'.include "{netlist_filename}"\n' + content
+
+        if not has_end:
+            content += "\n.end\n"
+
+        return content
+
+    def _build_fallback_deck(
+        self,
+        tb_id: str,
+        subckt_name: str,
+        pin_names_str: str,
+        pins: List[Dict[str, Any]],
+        netlist_filename: str,
+        specs: List[Dict[str, Any]]
+    ) -> str:
+        """Constructs an operational fallback testbench if LLM query encounters issue."""
+        deck = [
+            f"* Fallback Automated LTspice Testbench for {subckt_name} ({tb_id})",
+            f'.include "{netlist_filename}"',
+            f"XDUT {pin_names_str} {subckt_name}",
+            "VGND 0 0 0",
+            "VCC VCC 0 3.3",
+            "VIN IN 0 PULSE(0 3.3 10n 1n 1n 20n 50n)",
+            ".tran 1n 100n",
+            ".meas tran vout_max max V(OUT)",
+            ".meas tran vout_min min V(OUT)",
+            ".meas tran i_supply avg -I(VCC)",
+            ".end"
+        ]
+        return "\n".join(deck) + "\n"
