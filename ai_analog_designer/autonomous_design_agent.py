@@ -68,12 +68,13 @@ class AutonomousAnalogDesignAgent:
         functional_blocks = raw_extraction.get("functional_blocks", [])
 
         part_name = ic_info.get("name", "ANALOG_IC")
+        safe_part_name = re.sub(r'[^a-zA-Z0-9_\-]', '_', part_name)
         subckt_name = re.sub(r'[^a-zA-Z0-9_]', '_', part_name).upper()
 
         logger.info(f"Target IC: {part_name} | Pins Extracted: {len(pins)} | Specs Extracted: {len(specifications)}")
 
         # Save KG snapshot
-        kg_file = os.path.join(self.output_dir, f"{part_name}_knowledge_graph.json")
+        kg_file = os.path.join(self.output_dir, f"{safe_part_name}_knowledge_graph.json")
         with open(kg_file, "w", encoding="utf-8") as f:
             json.dump(raw_extraction, f, indent=2)
 
@@ -149,6 +150,39 @@ class AutonomousAnalogDesignAgent:
             pass_rate = eval_res["pass_rate_percent"]
             logger.info(f"Iteration {iteration} Evaluation Result: Pass Rate = {pass_rate:.1f}% ({eval_res['passed_specs']}/{eval_res['total_specs']} specs passed)")
 
+            # Analyze shortfalls in this iteration
+            shortfalls = []
+            if eval_res.get("simulation_errors"):
+                shortfalls.extend([f"Compiler/Simulation Error: {e}" for e in eval_res["simulation_errors"][:4]])
+            failed_evals = [e for e in eval_res.get("spec_evaluations", []) if not e.get("passed")]
+            for fe in failed_evals[:6]:
+                sym = fe.get("symbol")
+                meas = fe.get("measured")
+                diag = fe.get("diagnostic", "Out of bounds")
+                meas_str = f"{meas:.4g}" if meas is not None else "Unobserved"
+                shortfalls.append(f"Param '{sym}' violated: {diag} (Measured: {meas_str})")
+
+            # Analyze improvements made in this iteration
+            improvements = []
+            if iteration > 1 and len(design_iterations) > 0:
+                prev_it = design_iterations[-1]
+                delta_pass = pass_rate - prev_it["pass_rate_percent"]
+                if delta_pass > 0:
+                    improvements.append(f"Pass rate improved by +{delta_pass:.1f}% ({prev_it['passed_specs']} -> {eval_res['passed_specs']} specs passed).")
+                if prev_it.get("simulation_errors") and not eval_res.get("simulation_errors"):
+                    improvements.append("Resolved prior SPICE compiler / syntax errors completely.")
+                prev_passed = set(prev_it.get("passed_symbols", []))
+                curr_passed = set([e["symbol"] for e in eval_res.get("spec_evaluations", []) if e.get("passed")])
+                newly_passed = curr_passed - prev_passed
+                if newly_passed:
+                    improvements.append(f"Newly satisfied specs: {', '.join(list(newly_passed)[:5])}.")
+                if synth_res.get("architecture_summary"):
+                    improvements.append(f"Topology refinement: {synth_res['architecture_summary'][:140]}...")
+            else:
+                improvements.append("Initial first-principles topology and Level-1 parameter sizing synthesized from scratch.")
+
+            passed_syms = [e["symbol"] for e in eval_res.get("spec_evaluations", []) if e.get("passed")]
+
             design_iterations.append({
                 "iteration": iteration,
                 "netlist_path": netlist_path,
@@ -156,6 +190,10 @@ class AutonomousAnalogDesignAgent:
                 "passed_specs": eval_res["passed_specs"],
                 "failed_specs": eval_res["failed_specs"],
                 "unmeasured_specs": eval_res["unmeasured_specs"],
+                "passed_symbols": passed_syms,
+                "simulation_errors": eval_res.get("simulation_errors", []),
+                "shortfalls": shortfalls,
+                "improvements": improvements,
                 "architecture_summary": synth_res.get("architecture_summary", ""),
                 "design_rationale": synth_res.get("design_rationale", {})
             })
@@ -184,11 +222,11 @@ class AutonomousAnalogDesignAgent:
             final_netlist_path=final_netlist_path
         )
 
-        report_md_path = os.path.join(self.output_dir, f"{part_name}_DESIGN_VERIFICATION_REPORT.md")
+        report_md_path = os.path.join(self.output_dir, f"{safe_part_name}_DESIGN_VERIFICATION_REPORT.md")
         with open(report_md_path, "w", encoding="utf-8") as f:
             f.write(report["markdown"])
 
-        report_json_path = os.path.join(self.output_dir, f"{part_name}_DESIGN_SUMMARY.json")
+        report_json_path = os.path.join(self.output_dir, f"{safe_part_name}_DESIGN_SUMMARY.json")
         with open(report_json_path, "w", encoding="utf-8") as f:
             json.dump(report["summary"], f, indent=2)
 
@@ -236,6 +274,24 @@ class AutonomousAnalogDesignAgent:
 
         md_lines.extend([
             "",
+            "### 2.1 Port Dependency Graph Topology",
+            "```mermaid",
+            "graph TD"
+        ])
+        for p in pins:
+            pname = p["name"]
+            prole = p.get("role", "SIGNAL")
+            ptime = pdg_res["schedule"].get(pname, 0.0) * 1e6
+            md_lines.append(f'    {pname}["{pname} ({prole})<br/>{ptime:.1f}us"]')
+        pdg_graph = pdg_res.get("pdg")
+        if pdg_graph and hasattr(pdg_graph, "edges"):
+            for u, v, d in pdg_graph.edges(data=True):
+                delay = d.get("settling_time", 0.0) * 1e6
+                md_lines.append(f'    {u} -->|{delay:.1f}us| {v}')
+        md_lines.append("```")
+
+        md_lines.extend([
+            "",
             "## 3. Specification Verification & SymPy Oracle Audit",
             "Detailed verification results evaluated against SymPy interval constraints:",
             "| Parameter | Min Target | Typ Target | Max Target | Measured Value | Unit | Status |",
@@ -259,7 +315,7 @@ class AutonomousAnalogDesignAgent:
 
         md_lines.extend([
             "",
-            "## 4. Closed-Loop Iteration History",
+            "## 4. Closed-Loop Iteration History & Root Cause Analysis",
             "| Iteration | Pass Rate | Passed Specs | Failed Specs | Architecture Notes |",
             "| :--- | :--- | :--- | :--- | :--- |"
         ])
@@ -268,6 +324,20 @@ class AutonomousAnalogDesignAgent:
             md_lines.append(
                 f"| Iteration {it['iteration']} | {it['pass_rate_percent']:.1f}% | {it['passed_specs']} | {it['failed_specs']} | {it.get('architecture_summary', '')[:80]}... |"
             )
+
+        for it in iterations:
+            i_num = it['iteration']
+            md_lines.append(f"\n### 4.{i_num} Loop {i_num} Detailed Audit")
+            md_lines.append(f"- **Pass Rate**: `{it['pass_rate_percent']:.1f}%` ({it['passed_specs']}/{it['passed_specs'] + it['failed_specs']} specs passed)")
+            md_lines.append("\n**Shortfall Audit (미달 원인 분석):**")
+            for sf in it.get("shortfalls", []):
+                md_lines.append(f"- {sf}")
+            if not it.get("shortfalls"):
+                md_lines.append("- None (All specifications and compilation checks passed).")
+
+            md_lines.append("\n**Improvement Actions (개선 및 수정 사항):**")
+            for imp in it.get("improvements", []):
+                md_lines.append(f"- {imp}")
 
         md_lines.extend([
             "",

@@ -56,7 +56,7 @@ class SymPyOracleEngine:
         typ_val = self.parse_numeric(spec.get("typ"))
         max_val = self.parse_numeric(spec.get("max"))
 
-        unit = spec.get("unit", "")
+        unit = spec.get("unit") or ""
         # Adjust for units specified at table level
         multiplier = 1.0
         unit_lower = unit.lower()

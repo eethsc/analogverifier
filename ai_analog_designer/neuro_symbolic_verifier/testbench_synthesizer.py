@@ -294,8 +294,18 @@ XDUT {pin_names_str} {subckt_name}
                 line_str = re.sub(r'\brshunt=\S+', '', line_str, flags=re.IGNORECASE)
                 line_str = re.sub(r'\s+', ' ', line_str).strip()
 
+            # Ensure .meas directives have an explicit analysis type (op, tran, ac, dc, noise, tf)
+            if line_str.lower().startswith(".meas"):
+                m_toks = line_str.split()
+                valid_types = {"op", "tran", "ac", "dc", "noise", "tf"}
+                if len(m_toks) >= 2 and m_toks[1].lower() not in valid_types:
+                    default_type = "tran" if "tran" in deck.lower() else "op"
+                    line_str = f"{m_toks[0]} {default_type} " + " ".join(m_toks[1:])
+
             # Ensure action keyword like FIND exists before bare V(...) or I(...) in .meas directives
             line_str = re.sub(r'^(\.meas\s+\S+\s+\S+\s+)([VIvi]\()', r'\1FIND \2', line_str, flags=re.IGNORECASE)
+            # Clean duplicate action words like PARAM FIND or MAX FIND
+            line_str = re.sub(r'\b(PARAM|MAX|MIN|AVG)\s+FIND\b', r'\1', line_str, flags=re.IGNORECASE)
 
             # Deduplicate component instance names
             first_tok = tokens[0] if tokens else ""

@@ -86,8 +86,15 @@ class NetlistValidator:
                 clean_lines.append(line)
                 continue
 
-            # Track subckt context
+            # Drop orphaned single brackets or semicolons
+            if line_str in [")", "}", "]", ";"]:
+                continue
+
+            # Track subckt context; if nested .subckt is encountered, close the prior one with .ends
             if line_str.lower().startswith(".subckt"):
+                if subckt_scopes:
+                    clean_lines.append(".ends")
+                    scope_instances = subckt_scopes.pop()
                 subckt_scopes.append(scope_instances)
                 scope_instances = set()
             elif line_str.lower().startswith(".ends"):
@@ -96,10 +103,19 @@ class NetlistValidator:
                 else:
                     scope_instances = set()
 
-            # In LTspice, .global and .temp inside .subckt are illegal
+            # In LTspice, .node is invalid and .global/.temp inside .subckt are illegal
+            if line_str.lower().startswith(".node "):
+                clean_lines.append(f"* Removed invalid .node directive: {line_str}")
+                continue
             if len(subckt_scopes) > 0 and (line_str.lower().startswith(".global") or line_str.lower().startswith(".temp")):
                 clean_lines.append(f"* Removed subckt directive: {line_str}")
                 continue
+
+            # For BJTs (Q...), strip invalid MOSFET sizing parameters W=... L=...
+            tokens = line_str.split()
+            if tokens and tokens[0].upper().startswith("Q") and not tokens[0].startswith("."):
+                line_str = re.sub(r'\b[WL]=\S+', '', line_str, flags=re.IGNORECASE).strip()
+                line = re.sub(r'\b[WL]=\S+', '', line, flags=re.IGNORECASE).strip()
 
             # In LTspice expressions, logical AND is & (not &&) and logical OR is | (not ||)
             if "&&" in line:
