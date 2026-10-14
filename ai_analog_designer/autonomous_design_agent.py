@@ -9,6 +9,7 @@ from .pdf_to_graph import PDFDatasheetParser, HardwareKnowledgeGraphBuilder, Por
 from .circuit_synthesis import AICircuitArchitect, NetlistValidator
 from .neuro_symbolic_verifier import TestbenchSynthesizer, ClosedLoopEvaluator
 from .visualization import ProcessVisualizer
+from .tracing import ExecutionTracer
 
 logger = logging.getLogger("AutonomousAnalogDesignAgent")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -121,10 +122,16 @@ Return ONLY valid JSON.
           3. Real-time progress updates via progress_callback
         """
         logger.info(f"=== Starting Autonomous Analog Design (PDF: {datasheet_pdf_path}, Prompt: {user_prompt}) ===")
+        self.tracer = ExecutionTracer(target_name=os.path.basename(datasheet_pdf_path) if datasheet_pdf_path else "CUSTOM_CIRCUIT")
 
         # -------------------------------------------------------------
         # Phase 1: Knowledge Ingestion (PDF Parsing and/or User Prompt)
         # -------------------------------------------------------------
+        self.tracer.start_span(1, "Phase 1: Knowledge Ingestion & HKG Construction", inputs={
+            "datasheet_pdf_path": datasheet_pdf_path,
+            "user_prompt": user_prompt,
+            "max_pages": max_pages
+        })
         if progress_callback:
             progress_callback(1, "Phase 1: Knowledge Ingestion", "Parsing datasheet and natural language requirements...")
 
@@ -145,7 +152,9 @@ Return ONLY valid JSON.
             hkg.graph["raw_extraction"] = raw_extraction
             hkg.graph["nodes"] = [raw_extraction.get("ic_device", {})]
         else:
-            raise ValueError("Either datasheet_pdf_path or user_prompt must be provided.")
+            err = ValueError("Either datasheet_pdf_path or user_prompt must be provided.")
+            self.tracer.record_error(err, remediation="Provide a valid datasheet PDF path or natural language prompt.")
+            raise err
 
         ic_info = raw_extraction.get("ic_device", {"name": "DUT_IC", "category": "ANALOG", "description": ""})
         pins = raw_extraction.get("pins", [])
@@ -157,6 +166,7 @@ Return ONLY valid JSON.
             ic_info["description"] = f"{ic_info.get('description', '')}\n[User Prompt Directives]: {user_prompt}"
 
         part_name = ic_info.get("name", "ANALOG_IC")
+        self.tracer.target_name = part_name
         safe_part_name = re.sub(r'[^a-zA-Z0-9_\-]', '_', part_name)
         subckt_name = re.sub(r'[^a-zA-Z0-9_]', '_', part_name).upper()
 
@@ -167,9 +177,19 @@ Return ONLY valid JSON.
         with open(kg_file, "w", encoding="utf-8") as f:
             json.dump(raw_extraction, f, indent=2)
 
+        self.tracer.end_span(outputs={
+            "part_name": part_name,
+            "pins_count": len(pins),
+            "specifications_count": len(specifications),
+            "pins": [p.get("name") for p in pins[:10]]
+        })
+
         # -------------------------------------------------------------
         # Phase 2: Port Dependency Graph (PDG) Scheduling
         # -------------------------------------------------------------
+        self.tracer.start_span(2, "Phase 2: Port Dependency Graph (PDG) & Timing Schedule", inputs={
+            "pins_count": len(pins)
+        })
         if progress_callback:
             progress_callback(2, "Phase 2: Port Dependency Graph", f"Extracting PDG & topological settling sequence for {len(pins)} pins...")
 
@@ -179,6 +199,11 @@ Return ONLY valid JSON.
 
         for pin_name, act_time in pdg_schedule.items():
             logger.info(f"  [PDG Schedule] Pin {pin_name:10s} -> Activation Delay: {act_time*1e6:.2f} us")
+
+        self.tracer.end_span(outputs={
+            "pin_schedule_us": {k: round(v*1e6, 2) for k, v in pdg_schedule.items()},
+            "levels_count": len(levels)
+        })
 
         # -------------------------------------------------------------
         # Phase 3 & 4: AI Synthesis & Closed-Loop Verification Loop
@@ -193,6 +218,11 @@ Return ONLY valid JSON.
                 progress_callback(3, f"Phase 3: AI Netlist Synthesis (Loop {iteration})", "Synthesizing transistor-level SPICE netlist from first principles...")
 
             logger.info(f"--- Iteration {iteration}/{self.max_iterations}: AI Netlist Synthesis ---")
+            self.tracer.start_span(3, f"Phase 3: AI Netlist Synthesis (Loop {iteration})", inputs={
+                "iteration": iteration,
+                "subckt_name": subckt_name,
+                "user_prompt": user_prompt
+            })
 
             # 3.1 AI Netlist Synthesis (Prompt LLM with specifications, user prompt, and feedback)
             synth_res = self.circuit_architect.synthesize_netlist(
@@ -222,8 +252,16 @@ Return ONLY valid JSON.
                 f.write(cleaned_netlist)
 
             final_netlist_path = netlist_path
+            self.tracer.end_span(outputs={
+                "netlist_path": netlist_path,
+                "subcircuit_name": subckt_name,
+                "netlist_line_count": len(cleaned_netlist.splitlines())
+            })
 
             # 4.1 Synthesize LTspice Testbenches
+            self.tracer.start_span(4, f"Phase 4: Testbench Synthesis (Loop {iteration})", inputs={
+                "netlist": netlist_filename
+            })
             if progress_callback:
                 progress_callback(4, f"Phase 4: Testbench Generation (Loop {iteration})", "Synthesizing .op, .tran, .ac testbenches aligned with PDG schedule...")
             logger.info(f"Iteration {iteration}: Synthesizing LTspice testbenches using PDG activation schedule...")
@@ -234,8 +272,15 @@ Return ONLY valid JSON.
                 specifications=specifications,
                 pdg_schedule=pdg_schedule
             )
+            self.tracer.end_span(outputs={
+                "testbench_count": len(testbenches),
+                "testbenches": list(testbenches.keys())
+            })
 
             # 4.2 Run LTspice batch simulations & evaluate SymPy oracles
+            self.tracer.start_span(5, f"Phase 5: LTspice & SymPy Evaluation (Loop {iteration})", inputs={
+                "testbench_count": len(testbenches)
+            })
             if progress_callback:
                 progress_callback(5, f"Phase 5: LTspice & SymPy Evaluation (Loop {iteration})", "Executing headless batch simulation & verifying formal intervals...")
             logger.info(f"Iteration {iteration}: Executing LTspice simulations & evaluating SymPy oracles...")
@@ -248,6 +293,17 @@ Return ONLY valid JSON.
 
             final_evaluation = eval_res
             pass_rate = eval_res["pass_rate_percent"]
+            self.tracer.end_span(outputs={
+                "pass_rate_percent": pass_rate,
+                "passed_specs": eval_res["passed_specs"],
+                "failed_specs": eval_res["failed_specs"],
+                "unmeasured_specs": eval_res["unmeasured_specs"],
+                "simulation_errors": eval_res.get("simulation_errors", [])[:2]
+            })
+
+            self.tracer.start_span(6, f"Phase 6: Closed-Loop Diagnostics (Loop {iteration})", inputs={
+                "pass_rate_percent": pass_rate
+            })
             if progress_callback:
                 progress_callback(6, f"Phase 6: Closed-Loop Diagnostics (Loop {iteration})", f"Pass Rate: {pass_rate:.1f}% ({eval_res['passed_specs']}/{eval_res['total_specs']}). Analyzing shortfalls...")
             logger.info(f"Iteration {iteration} Evaluation Result: Pass Rate = {pass_rate:.1f}% ({eval_res['passed_specs']}/{eval_res['total_specs']} specs passed)")
@@ -300,6 +356,11 @@ Return ONLY valid JSON.
                 "design_rationale": synth_res.get("design_rationale", {})
             })
 
+            self.tracer.end_span(outputs={
+                "shortfalls_count": len(shortfalls),
+                "improvements_count": len(improvements)
+            })
+
             # Check convergence
             if eval_res["all_passed"] or pass_rate >= 100.0:
                 logger.info("SUCCESS: 100% of datasheet specifications satisfied!")
@@ -310,7 +371,7 @@ Return ONLY valid JSON.
             logger.info(f"Refinement Feedback for next iteration:\n{current_feedback}")
 
         # -------------------------------------------------------------
-        # Phase 5: Generate Final Comprehensive Report
+        # Phase 5: Generate Final Comprehensive Report & Traces
         # -------------------------------------------------------------
         report = self._generate_report(
             part_name=part_name,
@@ -327,6 +388,18 @@ Return ONLY valid JSON.
         report_md_path = os.path.join(self.output_dir, f"{safe_part_name}_DESIGN_VERIFICATION_REPORT.md")
         with open(report_md_path, "w", encoding="utf-8") as f:
             f.write(report["markdown"])
+
+        # Export Fine-Grained Step-by-Step Execution Traces
+        try:
+            trace_json_path = os.path.join(self.output_dir, f"{safe_part_name}_execution_trace.json")
+            trace_html_path = os.path.join(self.output_dir, f"{safe_part_name}_TRACE_INSPECTOR.html")
+            self.tracer.export_json(trace_json_path)
+            self.tracer.export_html(trace_html_path)
+            report["summary"]["trace_inspector_url"] = trace_html_path
+            report["trace"] = self.tracer.to_dict()
+            logger.info(f"Execution trace inspector generated at: {trace_html_path}")
+        except Exception as te:
+            logger.warning(f"Could not export execution trace: {te}")
 
         report_json_path = os.path.join(self.output_dir, f"{safe_part_name}_DESIGN_SUMMARY.json")
         with open(report_json_path, "w", encoding="utf-8") as f:

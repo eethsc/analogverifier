@@ -13,6 +13,7 @@ from typing import Dict, Any, List, Optional
 
 from ..autonomous_design_agent import AutonomousAnalogDesignAgent
 from ..visualization import ProcessVisualizer
+from ..pdf_to_graph import PDGVisualizer
 
 logger = logging.getLogger("StudioServer")
 
@@ -35,6 +36,12 @@ class StudioRequestHandler(SimpleHTTPRequestHandler):
         elif path == "/api/status":
             task_id = query.get("task_id", [""])[0]
             self.serve_status_api(task_id)
+        elif path == "/api/trace":
+            task_id = query.get("task_id", [""])[0]
+            self.serve_trace_api(task_id)
+        elif path == "/api/extract_pdg":
+            pdf_path = query.get("pdf_path", [""])[0]
+            self.handle_extract_pdg_api(pdf_path)
         elif path == "/dashboard":
             task_id = query.get("task_id", [""])[0]
             self.serve_dashboard(task_id)
@@ -89,6 +96,56 @@ class StudioRequestHandler(SimpleHTTPRequestHandler):
             "error": task.get("error")
         })
 
+    def serve_trace_api(self, task_id: str):
+        """Returns the execution trace spans and telemetry data for a task."""
+        with TASKS_LOCK:
+            task = TASKS.get(task_id)
+
+        if not task or not task.get("output_dir"):
+            self.send_json({"error": "Task not found"}, status=404)
+            return
+
+        traces = glob.glob(os.path.join(task["output_dir"], "*_execution_trace.json"))
+        if traces:
+            try:
+                with open(traces[0], "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                self.send_json({"status": "success", "trace": data})
+                return
+            except Exception as e:
+                logger.error(f"Error reading trace: {e}")
+
+        self.send_json({
+            "status": "in_flight",
+            "current_phase": task.get("current_phase", 1),
+            "logs": task.get("logs", [])
+        })
+
+    def handle_extract_pdg_api(self, pdf_path: str):
+        """Extracts and visualizes the Port Dependency Graph directly from a datasheet PDF."""
+        if not pdf_path or not os.path.exists(pdf_path):
+            self.send_json({"error": f"Datasheet PDF not found at: {pdf_path}"}, status=400)
+            return
+
+        try:
+            res = PDGVisualizer.extract_from_pdf(pdf_path)
+            pins = res["pins"]
+            schedule = res["schedule"]
+            svg_markup = PDGVisualizer.to_svg(pins, schedule)
+            mermaid_code = PDGVisualizer.to_mermaid(pins, schedule)
+
+            self.send_json({
+                "status": "success",
+                "ic_name": res["ic_info"].get("name", os.path.splitext(os.path.basename(pdf_path))[0]),
+                "pins": pins,
+                "schedule": {k: round(v*1e6, 2) for k, v in schedule.items()},
+                "svg": svg_markup,
+                "mermaid": mermaid_code
+            })
+        except Exception as e:
+            logger.error(f"Error extracting PDG: {e}", exc_info=True)
+            self.send_json({"error": str(e)}, status=500)
+
     def serve_dashboard(self, task_id: str):
         """Serves the generated interactive visual dashboard for the specified task."""
         with TASKS_LOCK:
@@ -120,7 +177,6 @@ class StudioRequestHandler(SimpleHTTPRequestHandler):
             content_length = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(content_length)
 
-            # Simple robust multipart extractor
             content_type = self.headers.get("Content-Type", "")
             boundary = content_type.split("boundary=")[-1].strip()
             boundary_bytes = ("--" + boundary).encode("utf-8")
@@ -341,6 +397,17 @@ class StudioRequestHandler(SimpleHTTPRequestHandler):
       background-color: rgba(52, 211, 153, 0.15);
       color: #34d399;
     }
+    .step-error {
+      border-color: #f87171;
+      background-color: rgba(248, 113, 113, 0.15);
+      color: #f87171;
+    }
+    .node-pin {
+      transition: all 0.3s ease;
+    }
+    .node-pin:hover {
+      transform: scale(1.08);
+    }
   </style>
 </head>
 <body class="min-h-screen custom-scrollbar p-3 md:p-6 antialiased">
@@ -415,6 +482,58 @@ class StudioRequestHandler(SimpleHTTPRequestHandler):
           <!-- Mode C: Pure Natural Language -->
           <div id="promptOnlyZone" class="hidden text-xs text-amber-300/80 bg-amber-500/10 border border-amber-500/20 p-3 rounded-xl">
             Pure Natural Language Mode active. The AI specification architect will synthesize the pinout and electrical constraints directly from your prompt.
+          </div>
+
+          <!-- Visualize PDG Action Button -->
+          <div class="pt-2">
+            <button type="button" onclick="previewDatasheetPDG()" id="btnPreviewPDG" class="w-full py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-sky-300 font-semibold text-xs border border-slate-700 flex items-center justify-center gap-2 transition-all">
+              <svg class="w-4 h-4 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+              <span>🔍 Extract &amp; Visualize PDG from Datasheet</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Collapsible Dedicated PDG Visualizer Preview Card -->
+        <div id="pdgPreviewCard" class="hidden bg-[var(--card)] border border-sky-500/30 rounded-2xl p-5 shadow-lg space-y-4">
+          <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+            <div>
+              <h3 class="text-xs uppercase font-bold text-sky-400 flex items-center gap-1.5">
+                <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+                Extracted Port Dependency Graph (PDG)
+              </h3>
+              <p id="pdgIcNameSubtitle" class="text-[11px] text-slate-400">Topological Settling Sequence &sigma;(p)</p>
+            </div>
+            <button onclick="document.getElementById('pdgPreviewCard').classList.add('hidden')" class="text-slate-500 hover:text-white text-xs">&times; Close</button>
+          </div>
+
+          <!-- Playback Controls -->
+          <div class="flex items-center justify-between gap-3 bg-slate-900 border border-slate-800 p-2.5 rounded-xl text-xs">
+            <button onclick="togglePdgPlay()" id="btnPdgPlay" class="text-sky-400 font-bold hover:text-sky-300 flex items-center gap-1">
+              <span>Play Sequence</span>
+            </button>
+            <input type="range" id="pdgTimeSlider" min="0" max="10" step="0.5" value="0" oninput="setPdgTime(parseFloat(this.value))" class="w-28 accent-sky-400">
+            <span id="pdgTimeVal" class="font-mono text-sky-300 font-bold w-12 text-right">0.0 &mu;s</span>
+          </div>
+
+          <!-- SVG Canvas Container -->
+          <div id="pdgSvgContainer" class="bg-slate-950 border border-slate-800 rounded-xl p-3 flex items-center justify-center min-h-[220px] max-h-[300px] overflow-x-auto">
+            <!-- Rendered dynamically -->
+          </div>
+
+          <!-- Schedule Table -->
+          <div class="max-h-40 overflow-y-auto custom-scrollbar border border-slate-800 rounded-xl">
+            <table class="w-full text-[11px] text-left">
+              <thead class="text-slate-400 uppercase text-[10px] bg-slate-900 border-b border-slate-800">
+                <tr>
+                  <th class="px-2.5 py-1.5">Pin</th>
+                  <th class="px-2.5 py-1.5">Role</th>
+                  <th class="px-2.5 py-1.5">Delay &sigma;(p)</th>
+                  <th class="px-2.5 py-1.5">Status</th>
+                </tr>
+              </thead>
+              <tbody id="pdgTableBody" class="divide-y divide-slate-800/60 text-slate-300">
+              </tbody>
+            </table>
           </div>
         </div>
 
@@ -530,8 +649,23 @@ class StudioRequestHandler(SimpleHTTPRequestHandler):
             <span id="logCounter" class="text-[11px] font-mono text-slate-500">0 entries</span>
           </div>
 
-          <div id="logTerminal" class="h-56 bg-slate-950 border border-slate-800 rounded-xl p-3 font-mono text-xs text-slate-300 overflow-y-auto custom-scrollbar space-y-1">
+          <div id="logTerminal" class="h-48 bg-slate-950 border border-slate-800 rounded-xl p-3 font-mono text-xs text-slate-300 overflow-y-auto custom-scrollbar space-y-1">
             <div class="text-slate-600">Waiting for design job to launch...</div>
+          </div>
+        </div>
+
+        <!-- Card: Step-by-Step Execution Trace & Diagnostics Telemetry -->
+        <div class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-5 shadow-lg space-y-3">
+          <div class="flex items-center justify-between">
+            <h3 class="text-xs font-bold uppercase tracking-wider text-amber-400 flex items-center gap-2">
+              <svg class="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/></svg>
+              Step-by-Step Trace &amp; Debug Inspector
+            </h3>
+            <span id="traceSpanCount" class="text-[11px] font-mono text-slate-500">0 spans</span>
+          </div>
+
+          <div id="traceInspectorContainer" class="space-y-2.5 max-h-64 overflow-y-auto custom-scrollbar">
+            <div class="text-xs text-slate-500 p-2 text-center">Spans will populate dynamically as each sub-process executes.</div>
           </div>
         </div>
 
@@ -571,6 +705,9 @@ class StudioRequestHandler(SimpleHTTPRequestHandler):
     let selectedSamplePdfPath = null;
     let pollInterval = null;
     let currentTaskId = null;
+    let pdgTimer = null;
+    let pdgTime = 0.0;
+    let currentPdgData = null;
 
     function init() {
       loadSamples();
@@ -647,22 +784,110 @@ class StudioRequestHandler(SimpleHTTPRequestHandler):
       }
     }
 
-    async function launchDesign() {
-      let targetPdf = null;
-      if (currentDatasheetMode === 'upload') {
-        if (!uploadedPdfPath) {
-          alert('Please upload a datasheet PDF first, or switch to "Sample ICs" or "Pure Prompt" mode.');
-          return;
-        }
-        targetPdf = uploadedPdfPath;
-      } else if (currentDatasheetMode === 'sample') {
-        if (!selectedSamplePdfPath) {
-          alert('Please select a sample IC datasheet from the dropdown.');
-          return;
-        }
-        targetPdf = selectedSamplePdfPath;
+    function getTargetPdfPath() {
+      if (currentDatasheetMode === 'upload') return uploadedPdfPath;
+      if (currentDatasheetMode === 'sample') return selectedSamplePdfPath;
+      return null;
+    }
+
+    // -------------------------------------------------------------
+    // ON-DEMAND PDG VISUALIZATION
+    // -------------------------------------------------------------
+    async function previewDatasheetPDG() {
+      const pdf = getTargetPdfPath();
+      if (!pdf) {
+        alert('Please upload a datasheet PDF or select a sample IC first to extract its PDG.');
+        return;
       }
 
+      const btn = document.getElementById('btnPreviewPDG');
+      btn.disabled = true;
+      btn.innerHTML = '<svg class="w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path></svg><span>Extracting PDG Graph...</span>';
+
+      try {
+        const res = await fetch(`/api/extract_pdg?pdf_path=${encodeURIComponent(pdf)}`);
+        const data = await res.json();
+        if (data.status === 'success') {
+          renderPdgPreview(data);
+        } else {
+          alert('Error extracting PDG: ' + (data.error || 'Unknown error'));
+        }
+      } catch (e) {
+        alert('PDG Extraction error: ' + e);
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<svg class="w-4 h-4 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg><span>🔍 Extract &amp; Visualize PDG from Datasheet</span>';
+      }
+    }
+
+    function renderPdgPreview(data) {
+      currentPdgData = data;
+      document.getElementById('pdgIcNameSubtitle').textContent = `${data.ic_name} (${data.pins.length} Pins)`;
+      document.getElementById('pdgSvgContainer').innerHTML = data.svg;
+
+      const tbody = document.getElementById('pdgTableBody');
+      tbody.innerHTML = '';
+      data.pins.forEach(p => {
+        const d_us = data.schedule[p.name] || 0.0;
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td class="px-2.5 py-1.5 font-mono font-bold text-sky-400">${p.name}</td>
+          <td class="px-2.5 py-1.5">${p.role || 'SIGNAL'}</td>
+          <td class="px-2.5 py-1.5 font-mono">${d_us.toFixed(2)} &mu;s</td>
+          <td class="px-2.5 py-1.5" id="pdg-state-${p.name}">Waiting</td>
+        `;
+        tbody.appendChild(tr);
+      });
+
+      document.getElementById('pdgPreviewCard').classList.remove('hidden');
+      setPdgTime(0.0);
+    }
+
+    function setPdgTime(val) {
+      pdgTime = val;
+      document.getElementById('pdgTimeSlider').value = val;
+      document.getElementById('pdgTimeVal').textContent = `${val.toFixed(1)} \u03bcs`;
+
+      if (!currentPdgData) return;
+      currentPdgData.pins.forEach(p => {
+        const delay = currentPdgData.schedule[p.name] || 0.0;
+        const stateEl = document.getElementById(`pdg-state-${p.name}`);
+        const nodeG = document.getElementById(`node-${p.name}`);
+        if (pdgTime >= delay) {
+          if (stateEl) stateEl.innerHTML = '<span class="text-emerald-400 font-bold">Active</span>';
+          if (nodeG) nodeG.querySelector('rect').setAttribute('fill', '#1e293b');
+        } else {
+          if (stateEl) stateEl.innerHTML = '<span class="text-slate-500">Waiting</span>';
+          if (nodeG) nodeG.querySelector('rect').setAttribute('fill', '#0f172a');
+        }
+      });
+    }
+
+    function togglePdgPlay() {
+      const btn = document.getElementById('btnPdgPlay');
+      if (pdgTimer) {
+        clearInterval(pdgTimer);
+        pdgTimer = null;
+        btn.textContent = 'Play Sequence';
+      } else {
+        btn.textContent = 'Pause';
+        if (pdgTime >= 10.0) pdgTime = 0.0;
+        pdgTimer = setInterval(() => {
+          pdgTime += 0.5;
+          if (pdgTime > 10.0) {
+            pdgTime = 10.0;
+            togglePdgPlay();
+          }
+          setPdgTime(pdgTime);
+        }, 250);
+      }
+    }
+
+    // -------------------------------------------------------------
+    // DESIGN GENERATION & TELEMETRY
+    // -------------------------------------------------------------
+    async function launchDesign() {
+      const targetPdf = getTargetPdfPath();
       const prompt = document.getElementById('userPromptInput').value.trim();
       const maxIters = parseInt(document.getElementById('maxItersSelect').value);
 
@@ -678,12 +903,13 @@ class StudioRequestHandler(SimpleHTTPRequestHandler):
       document.getElementById('taskStatusPill').textContent = 'Running';
       document.getElementById('resultsCard').classList.add('hidden');
       document.getElementById('logTerminal').innerHTML = '<div class="text-sky-400">Launching design agent...</div>';
+      document.getElementById('traceInspectorContainer').innerHTML = '<div class="text-xs text-sky-400 p-2">Tracing active execution spans...</div>';
 
       try {
         const res = await fetch('/api/generate', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: json.stringify({
+          body: JSON.stringify({
             pdf_path: targetPdf,
             user_prompt: prompt,
             max_iterations: maxIters
@@ -711,7 +937,7 @@ class StudioRequestHandler(SimpleHTTPRequestHandler):
           const data = await res.json();
 
           // Update Stepper
-          updateStepper(data.current_phase || 1);
+          updateStepper(data.current_phase || 1, data.status === 'failed');
 
           // Update Logs
           const logTerm = document.getElementById('logTerminal');
@@ -720,6 +946,9 @@ class StudioRequestHandler(SimpleHTTPRequestHandler):
             logTerm.scrollTop = logTerm.scrollHeight;
             document.getElementById('logCounter').textContent = `${data.logs.length} entries`;
           }
+
+          // Fetch fine-grained telemetry
+          fetchTraceTelemetry(taskId);
 
           if (data.status === 'completed') {
             clearInterval(pollInterval);
@@ -734,12 +963,72 @@ class StudioRequestHandler(SimpleHTTPRequestHandler):
       }, 1500);
     }
 
-    function updateStepper(activePhase) {
+    async function fetchTraceTelemetry(taskId) {
+      try {
+        const res = await fetch(`/api/trace?task_id=${taskId}`);
+        const data = await res.json();
+        if (data.trace && data.trace.spans) {
+          renderTraceSpans(data.trace.spans);
+        }
+      } catch (e) {}
+    }
+
+    function renderTraceSpans(spans) {
+      const container = document.getElementById('traceInspectorContainer');
+      document.getElementById('traceSpanCount').textContent = `${spans.length} spans`;
+      container.innerHTML = '';
+
+      spans.forEach((s, idx) => {
+        const isErr = s.status === 'ERROR';
+        const isWarn = s.status === 'WARNING';
+        const card = document.createElement('div');
+        card.className = `border ${isErr ? 'border-rose-500/50 bg-rose-950/20' : (isWarn ? 'border-amber-500/40 bg-amber-950/10' : 'border-slate-800 bg-slate-900/80')} rounded-xl p-3 text-xs space-y-2 transition-all`;
+
+        const statusBadge = isErr
+          ? '<span class="px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 font-mono text-[10px]">ERROR</span>'
+          : '<span class="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-mono text-[10px]">SUCCESS</span>';
+
+        card.innerHTML = `
+          <div class="flex items-center justify-between cursor-pointer" onclick="toggleTraceDetails(${idx})">
+            <div class="flex items-center gap-2">
+              <span class="w-5 h-5 rounded-full flex items-center justify-center font-bold text-[10px] bg-slate-800 text-slate-300">${s.phase}</span>
+              <span class="font-bold text-white text-[11px]">${s.name}</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="font-mono text-[10px] text-slate-400">${s.duration_ms} ms</span>
+              ${statusBadge}
+            </div>
+          </div>
+          ${s.error ? `
+            <div class="bg-rose-950/40 border border-rose-500/40 rounded-lg p-2.5 text-rose-300 space-y-1">
+              <div class="font-bold">[${s.error.type}] ${s.error.message}</div>
+              ${s.error.remediation_hint ? `<div class="text-amber-300 text-[10px] bg-amber-500/10 p-1.5 rounded">💡 <strong>Remediation:</strong> ${s.error.remediation_hint}</div>` : ''}
+            </div>
+          ` : ''}
+          <div id="trace-det-${idx}" class="hidden pt-1 space-y-1 text-[10px] font-mono border-t border-slate-800/60">
+            <div class="text-slate-400"><strong>Outputs:</strong> ${JSON.stringify(s.outputs)}</div>
+          </div>
+        `;
+        container.appendChild(card);
+      });
+    }
+
+    function toggleTraceDetails(idx) {
+      const el = document.getElementById(`trace-det-${idx}`);
+      if (el) el.classList.toggle('hidden');
+    }
+
+    function updateStepper(activePhase, isFailed = false) {
       for (let p = 1; p <= 6; p++) {
         const el = document.getElementById(`step-${p}`);
         if (!el) continue;
-        el.className = 'border rounded-xl p-3 transition-all ' +
-          (p < activePhase ? 'step-done' : (p === activePhase ? 'step-active' : 'border-slate-800 bg-slate-900/60 text-slate-500'));
+        if (p < activePhase) {
+          el.className = 'border rounded-xl p-3 transition-all step-done';
+        } else if (p === activePhase) {
+          el.className = 'border rounded-xl p-3 transition-all ' + (isFailed ? 'step-error' : 'step-active');
+        } else {
+          el.className = 'border border-slate-800 bg-slate-900/60 text-slate-500 rounded-xl p-3 transition-all';
+        }
       }
     }
 
