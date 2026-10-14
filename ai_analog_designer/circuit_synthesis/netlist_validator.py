@@ -47,18 +47,18 @@ class NetlistValidator:
 
     def sanitize_spice_syntax(self, code: str) -> str:
         """Sanitizes common SPICE / LTspice syntax errors and deduplicates instances per subcircuit."""
-        # Wrap any accidental prose before .subckt or after .ends with comment *
+        # Wrap any accidental prose before the first .subckt or after the last .ends with comment *
         idx = code.lower().find(".subckt")
         if idx != -1:
             prefix = code[:idx]
             clean_prefix = "\n".join(["* " + l if l.strip() and not l.strip().startswith(("*", ";")) else l for l in prefix.splitlines()])
-            ends_idx = code.lower().find(".ends")
+            ends_idx = code.lower().rfind(".ends")
             if ends_idx != -1:
                 ends_line_end = code.find("\n", ends_idx)
                 if ends_line_end != -1:
                     body = code[idx:ends_line_end]
                     suffix = code[ends_line_end:]
-                    clean_suffix = "\n".join(["* " + l if l.strip() and not l.strip().startswith(("*", ";")) else l for l in suffix.splitlines()])
+                    clean_suffix = "\n".join(["* " + l if l.strip() and not l.strip().startswith(("*", ";", ".")) else l for l in suffix.splitlines()])
                     code = clean_prefix + "\n" + body + "\n" + clean_suffix
                 else:
                     code = clean_prefix + "\n" + code[idx:]
@@ -74,6 +74,8 @@ class NetlistValidator:
 
         subckt_scopes = []
         scope_instances = set()
+        scope_v_pairs = set()
+        v_decouple_counter = 1
 
         for line in lines:
             line_str = line.strip()
@@ -97,22 +99,29 @@ class NetlistValidator:
                     scope_instances = subckt_scopes.pop()
                 subckt_scopes.append(scope_instances)
                 scope_instances = set()
+                scope_v_pairs = set()
             elif line_str.lower().startswith(".ends"):
                 if subckt_scopes:
                     scope_instances = subckt_scopes.pop()
                 else:
                     scope_instances = set()
+                scope_v_pairs = set()
 
-            # In LTspice, .node is invalid and .global/.temp inside .subckt are illegal
+            # In LTspice, .node is invalid and .global/.temp/.tran/.ac/.op inside .subckt are illegal
             if line_str.lower().startswith(".node "):
                 clean_lines.append(f"* Removed invalid .node directive: {line_str}")
                 continue
-            if len(subckt_scopes) > 0 and (line_str.lower().startswith(".global") or line_str.lower().startswith(".temp")):
+            if len(subckt_scopes) > 0 and line_str.lower().startswith((".global", ".temp", ".tran", ".ac", ".op", ".dc")):
                 clean_lines.append(f"* Removed subckt directive: {line_str}")
                 continue
 
             tokens = line_str.split()
             first_tok = tokens[0] if tokens else ""
+
+            # Remove invalid independent voltage model: e.g. .model VREF V (V=2.5)
+            if line_str.lower().startswith(".model") and len(tokens) >= 3 and tokens[2].upper() == "V":
+                clean_lines.append(f"* Removed invalid V model: {line_str}")
+                continue
 
             # Check for incomplete / truncated device lines (e.g. bare "C_OUTR")
             if tokens and first_tok[0].upper() in "RCLMQ" and not first_tok.startswith("."):
@@ -126,6 +135,49 @@ class NetlistValidator:
                 elif f_char == "Q" and len(tokens) < 5:
                     clean_lines.append(f"* Truncated element removed: {line_str}")
                     continue
+
+            # For behavioral sources (B, E, G): strip invalid parameters TD=... and TRISTATE=...
+            if tokens and first_tok[0].upper() in "BEG" and not first_tok.startswith("."):
+                line = re.sub(r'\bTD\s*=\s*\{?[^}\s]+\}?', '', line, flags=re.IGNORECASE)
+                line = re.sub(r'\bTRISTATE\s*=\s*\{?[^}\s]+\}?', '', line, flags=re.IGNORECASE)
+                line_str = line.strip()
+                tokens = line_str.split()
+
+            # Break self-referential algebraic loops in B-sources that cause singular matrix in LTspice
+            # e.g.: B1 X 0 V = { cond ? new_val : V(X) } -> causes singular matrix on node X
+            if tokens and first_tok[0].upper() == "B" and len(tokens) >= 3 and not first_tok.startswith("."):
+                out_node = tokens[1]
+                self_v_pattern = re.compile(r'\bV\s*\(\s*' + re.escape(out_node) + r'\s*\)', re.IGNORECASE)
+                if self_v_pattern.search(line):
+                    line = self_v_pattern.sub('0', line)
+                    clean_lines.append(f".ic V({out_node})=0")
+                    line_str = line.strip()
+                    tokens = line_str.split()
+
+            # Prevent parallel voltage sources driving identical nodes (over-defined circuit matrix)
+            if tokens and first_tok[0].upper() in "BV" and len(tokens) >= 3 and not first_tok.startswith("."):
+                is_v = True
+                if first_tok[0].upper() == "B":
+                    is_v = any(term in line_str.upper() for term in [" V =", " V=", " V "])
+                if is_v:
+                    n1 = tokens[1].upper()
+                    n2 = tokens[2].upper()
+                    pair = (n1, n2)
+                    if pair in scope_v_pairs and n1 not in ["0", "GND", "AGND"]:
+                        new_node = f"{tokens[1]}_dec_{v_decouple_counter}"
+                        v_decouple_counter += 1
+                        line = re.sub(r'^\s*(\S+\s+)' + re.escape(tokens[1]), r'\g<1>' + new_node, line)
+                        clean_lines.append(f"R_{new_node} {new_node} {tokens[1]} 1 ; Parallel source decoupling")
+                        line_str = line.strip()
+                        tokens = line_str.split()
+                    else:
+                        scope_v_pairs.add(pair)
+
+            # For pulse sources: replace dynamic V(node) inside PULSE with static typical voltage
+            if "PULSE(" in line_str.upper():
+                line = re.sub(r'PULSE\s*\(\s*([0-9\.\-]+)\s+V\([^)]+\)', r'PULSE(\1 3.3', line, flags=re.IGNORECASE)
+                line_str = line.strip()
+                tokens = line_str.split()
 
             # For MOSFETs (M...), remove parentheses around parameters e.g. (W=10u L=0.5u) -> W=10u L=0.5u
             if tokens and first_tok.upper().startswith("M") and not first_tok.startswith("."):
@@ -183,14 +235,19 @@ class NetlistValidator:
                 line = "".join(parts)
                 line_str = line.strip()
 
-            # Wrap bare parameter names on R, C, L devices in curly braces { ... }
+            # Wrap bare parameter names or unbraced math on R, C, L devices in curly braces { ... }
             tokens = line_str.split()
             if len(tokens) >= 4 and tokens[0][0].upper() in "RCL" and not tokens[0].startswith("."):
                 val_tok = tokens[3]
-                if not val_tok.startswith("{") and not val_tok[0].isdigit() and val_tok[0] not in "+-":
-                    tokens[3] = f"{{{val_tok}}}"
-                    line = " ".join(tokens)
-                    line_str = line.strip()
+                if not val_tok.startswith("{"):
+                    if any(op in val_tok for op in ["/", "*", "+"]):
+                        tokens[3] = f"{{{val_tok}}}"
+                        line = " ".join(tokens)
+                        line_str = line.strip()
+                    elif not val_tok[0].isdigit() and val_tok[0] not in "+-":
+                        tokens[3] = f"{{{val_tok}}}"
+                        line = " ".join(tokens)
+                        line_str = line.strip()
 
             # In-line procedural assignments inside B-sources: e.g. { a = 1 b = 2 c }
             first_tok = tokens[0] if tokens else ""
@@ -235,7 +292,42 @@ class NetlistValidator:
 
             clean_lines.append(line)
 
-        return "\n".join(clean_lines)
+        # Hoist all .model definitions to the global scope before the first .subckt
+        # This prevents "Node or model name expected" when helper subcircuits are defined
+        full_text = "\n".join(clean_lines)
+        model_pattern = re.compile(r'^\s*(\.model\s+[^\n]+)', re.MULTILINE | re.IGNORECASE)
+        found_models = model_pattern.findall(full_text)
+
+        standard_models = [
+            ".model NMOS NMOS (LEVEL=1 VTO=0.7 KP=100u GAMMA=0.4 PHI=0.7 LAMBDA=0.01)",
+            ".model PMOS PMOS (LEVEL=1 VTO=-0.7 KP=40u GAMMA=0.5 PHI=0.8 LAMBDA=0.01)",
+            ".model D_PROT D (IS=1e-15 N=1 RS=10)",
+            ".model S_MODEL VSWITCH (RON=10 ROFF=1G VTH=0.5 VH=0.1)"
+        ]
+
+        all_models = list(found_models)
+        for sm in standard_models:
+            m_type = sm.split()[1].upper()
+            if not any(f" {m_type} " in m.upper() for m in found_models):
+                all_models.insert(0, sm)
+
+        # Remove duplicate models preserving order
+        unique_models = []
+        seen_model_names = set()
+        for m in all_models:
+            m_parts = m.strip().split()
+            if len(m_parts) >= 2:
+                name = m_parts[1].upper()
+                if name not in seen_model_names:
+                    seen_model_names.add(name)
+                    unique_models.append(m.strip())
+
+        idx_first_sub = full_text.lower().find(".subckt")
+        if idx_first_sub != -1 and unique_models:
+            header = "* --- Globally Hoisted Models for Multi-Subcircuit Visibility ---\n" + "\n".join(unique_models) + "\n\n"
+            full_text = full_text[:idx_first_sub] + header + full_text[idx_first_sub:]
+
+        return full_text
 
     def validate(
         self,

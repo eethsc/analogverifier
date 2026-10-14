@@ -93,10 +93,31 @@ Your task is to synthesize from scratch a complete, highly realistic, physically
    - In B-source expressions `{{ ... }}`, use single `&` for logical AND and single `|` for logical OR. NEVER use `&&` or `||`!
    - B-sources MUST evaluate a SINGLE mathematical expression (e.g. `B1 out 0 V = {{ (sin(2*pi*f*time) > 0) ? 3.3 : 0 }}`). NEVER write procedural multi-variable code like `{{ a = 1 b = 2 c }}` inside a B-source! If you need intermediate values, define separate B-sources for each intermediate node or inline them.
    - Charge pumps (CP) driving loop filters MUST be modeled as CURRENT sources: `B_cp n_ctrl gnd I = {{ <expr> }}`, NOT voltage sources! Ideal voltage sources driving capacitors or referencing their own node voltage cause Singular Matrix errors in SPICE.
-   - Never define zero-impedance algebraic voltage loops (e.g. `B_src A 0 V = {{ V(A) + ... }}`).
+   - NEVER write self-referential behavioral sources: e.g. B1 X 0 V = {{ (cond) ? val : V(X) }}. SPICE cannot compute the DC operating point of an unbuffered self-loop and crashes with 'Singular matrix: check node X'.
+   - HOW TO MODEL MIXED-SIGNAL LATCHES / SAMPLE-AND-HOLD:
+     Use an ideal voltage-controlled switch S_sw and capacitor C_hold with a leak resistor:
+     S_sample IN HOLD_NODE CTRL 0 S_MODEL
+     C_sample HOLD_NODE 0 10p
+     R_sample HOLD_NODE 0 1G
+     E_buffer OUT 0 HOLD_NODE 0 1
+   - HOW TO MODEL DIGITAL TIMERS / ONE-SHOT DELAYS (e.g. BUSY pulse):
+     Do NOT write ddt(V(signal)) or 	ime - V(t_start)! Use an RC timing ramp:
+     R_time TRIG T_NODE 10k
+     C_time T_NODE 0 27p
+     B_busy BUSY 0 V = {{ (V(T_NODE) > 1.65) ? 3.3 : 0 }}
+   - HOW TO MODEL MULTI-BIT ADC/DAC CONVERSION:
+     Compute digital bits algebraically directly from analog input voltage:
+     B_code CODE 0 V = {{ min(16383, max(0, floor(V(IN) / V(VREF) * 16384))) }}
+     Then compute bit voltages e.g. B_db13 DB13_INT 0 V = {{ ((floor(V(CODE)/8192)) % 2 > 0.5) ? 3.3 : 0 }}
    - Every device instance name (M1, M2, R1, B1, etc.) must be strictly UNIQUE within each subcircuit.
    - For mid-line comments, use `;` (semicolon), NOT `*`.
    - DO NOT include `.global` or `.temp` inside `.subckt`.
+   - NEVER write simulation commands (`.tran`, `.ac`, `.op`, `.dc`) inside a subcircuit!
+   - NEVER place parentheses around MOSFET parameters: write `W=10u L=0.5u`, NEVER `(W=10u L=0.5u)`.
+   - NEVER invent non-standard parameters like `TD=` on B-sources or `TRISTATE=` on E-sources. For tri-state digital outputs, use standard voltage-controlled switches: `S_buf out node_in en 0 S_MODEL` with `.model S_MODEL VSWITCH (RON=10 ROFF=1G VTH=0.5 VH=0.1)`.
+   - NEVER write `.model ... V (...)`. Independent sources `V...` have no model.
+   - Independent source parameters (`PULSE`, `PWL`) must be fixed numbers or parameter names, NEVER dynamic node voltages `V(...)`.
+   - All arithmetic expressions on component values MUST be wrapped in curly braces: e.g. {{2n/1k}}.
 5. End the subcircuit with `.ends {subckt_name}`.
 6. All node names must be valid SPICE identifiers (alphanumeric and underscores, no spaces).
 

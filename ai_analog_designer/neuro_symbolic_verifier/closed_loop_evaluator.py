@@ -130,7 +130,12 @@ class ClosedLoopEvaluator:
             line_lower = line_str.lower()
             if any(term in line_lower for term in [
                 "syntax error", "fatal error", "error:", "cannot be instantiated", 
-                "unknown parameter", "already defined", "expected node", "expected model", "expected a sequence"
+                "unknown parameter", "already defined", "expected node", "expected model", 
+                "expected a sequence", "monotonically increasing", "model name expected",
+                "node or model name", "unknown subcircuit", "trouble with", "singular matrix",
+                "matrix is singular", "time step too small", "circuit contains these syntax errors",
+                "is not defined", "not defined", "number of nodes",
+                "are paralleled", "over-defined", "circuit matrix"
             ]):
                 errors.append(line_str)
                 for offset in [1, 2]:

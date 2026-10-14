@@ -145,6 +145,10 @@ Follow this physical power-up / activation timing strictly:
    - In `.meas tran <name> param <expr>`, NEVER append `FROM ... TO ...`.
    - Never use multi-arg MAX(a, b, c). LTspice MAX only takes 2 arguments: MAX(a, b).
    - For LTspice: Terminate the file strictly with `.end`. NO `.control` or `.endc`.
+8. STIMULUS & VOLTAGE SOURCE RULES:
+   - AT MOST ONE voltage source per pin. DO NOT define a flat zero-volt source (e.g. `VCONVST CONVST 0 0`) and then define a second pulse source for the same pin! Apply the stimulus or bias directly with a single source per pin.
+   - For power-down / reset / enable pins (e.g. A_PWD, PWD_RST, SHDN, CS, RD): bias them to their active/enabled state (e.g. 5V or 3.3V) so the circuit is fully awake during measurements!
+   - Ensure dynamic stimulus transitions (e.g. CONVST edge, clock pulses) occur WITHIN the simulation window defined by {sim_type}.
 
 OUTPUT FORMAT:
 Respond using the following XML tag:
@@ -171,7 +175,7 @@ XDUT {pin_names_str} {subckt_name}
                 elif ".end" in raw_resp.lower():
                     deck = raw_resp.strip()
 
-            deck = self._sanitize_testbench(deck, subckt_name, pin_names_str, netlist_filename, pins=pins)
+            deck = self._sanitize_testbench(deck, subckt_name, pin_names_str, netlist_filename, pins=pins, sim_type=sim_type)
             return {
                 "name": tb_id,
                 "description": title,
@@ -204,14 +208,75 @@ XDUT {pin_names_str} {subckt_name}
             pass
         return fallback_pins
 
-    def _sanitize_testbench(self, deck: str, subckt_name: str, pin_names_str: str, netlist_filename: str, pins: Optional[List[Dict[str, Any]]] = None) -> str:
+    def _fix_pwl_monotonicity(self, line: str) -> str:
+        """Ensures all time points in PWL(...) statements are strictly monotonically increasing."""
+        def fix_match(m):
+            raw_inner = m.group(1).strip()
+            tokens = raw_inner.split()
+            if len(tokens) < 4:
+                return m.group(0)
+
+            def parse_unit(s):
+                val_s = s.strip()
+                mult = 1.0
+                if val_s.endswith("s") or val_s.endswith("S"):
+                    val_s = val_s[:-1]
+                if val_s.endswith("u") or val_s.endswith("U"):
+                    mult = 1e-6
+                    val_s = val_s[:-1]
+                elif val_s.endswith("n") or val_s.endswith("N"):
+                    mult = 1e-9
+                    val_s = val_s[:-1]
+                elif val_s.endswith("p") or val_s.endswith("P"):
+                    mult = 1e-12
+                    val_s = val_s[:-1]
+                elif val_s.endswith("m") or val_s.endswith("M"):
+                    mult = 1e-3
+                    val_s = val_s[:-1]
+                try:
+                    return float(val_s) * mult
+                except Exception:
+                    return None
+
+            new_pairs = []
+            last_t = -1.0
+            for i in range(0, len(tokens), 2):
+                if i + 1 < len(tokens):
+                    t_str = tokens[i]
+                    v_str = tokens[i+1]
+                    t_val = parse_unit(t_str)
+                    if t_val is not None:
+                        if t_val <= last_t:
+                            t_val = last_t + 10e-9 # add 10ns
+                            t_str = f"{t_val*1e6:.4f}u"
+                        last_t = t_val
+                    new_pairs.extend([t_str, v_str])
+            return f"PWL({' '.join(new_pairs)})"
+
+        return re.sub(r'PWL\s*\(([^)]+)\)', fix_match, line, flags=re.IGNORECASE)
+
+    def _sanitize_testbench(
+        self,
+        deck: str,
+        subckt_name: str,
+        pin_names_str: str,
+        netlist_filename: str,
+        pins: Optional[List[Dict[str, Any]]] = None,
+        sim_type: str = ".tran 0 100u 0 10n"
+    ) -> str:
         """Sanitizes testbench for LTspice execution, stripping invalid HSPICE syntax, fixing PWL, and deduplicating."""
         lines = deck.splitlines()
         clean_lines = []
         has_end = False
         seen_instances = set()
-        seen_v_pairs = set()
-        out_pins = {p['name'].upper() for p in pins if p.get('role', '').upper() in ['OUTPUT', 'FEEDBACK']} if pins else set()
+        seen_v_sources = {}
+        seen_meas_names = set()
+        seen_sim_directive = False
+        target_sim_cmd = sim_type.strip().split()[0].lower() if sim_type else ".tran"
+        out_pins = {
+            p['name'].upper() for p in pins 
+            if p.get('direction', '').upper() in ['OUTPUT', 'OUT'] or p.get('role', '').upper() in ['OUTPUT', 'FEEDBACK', 'STATUS']
+        } if pins else set()
 
         for line in lines:
             line_str = line.strip()
@@ -230,6 +295,16 @@ XDUT {pin_names_str} {subckt_name}
             # Guarantee XDUT has exact matching pin sequence
             if line_str.upper().startswith("XDUT ") and subckt_name.upper() in line_str.upper():
                 line_str = f"XDUT {pin_names_str} {subckt_name}"
+
+            # Ensure strictly ONE simulation directive in the deck matching target sim_type
+            if line_str.lower().startswith((".tran", ".ac", ".op", ".dc", ".noise", ".tf")):
+                cmd = line_str.split()[0].lower()
+                if cmd == target_sim_cmd and not seen_sim_directive:
+                    seen_sim_directive = True
+                elif cmd == target_sim_cmd and seen_sim_directive:
+                    line_str = f"; Removed duplicate simulation directive: {line_str}"
+                else:
+                    line_str = f"; Removed conflicting simulation directive: {line_str}"
 
             # Remove voltage sources driving output/feedback pins or duplicating parallel node sources
             tokens = line_str.split()
@@ -250,25 +325,37 @@ XDUT {pin_names_str} {subckt_name}
                 else:
                     pair = (node_pos, node_neg)
                     inv_pair = (node_neg, node_pos)
-                    if pair in seen_v_pairs or inv_pair in seen_v_pairs:
-                        line_str = f"; Sanitized duplicate parallel voltage source short: {line_str}"
-                        tokens = []
+                    target_pair = pair if pair in seen_v_sources else (inv_pair if inv_pair in seen_v_sources else None)
+                    is_dynamic = any(term in line_str.upper() for term in ["PULSE", "SINE", "AC "]) or ("PWL" in line_str.upper() and not re.match(r'^PWL\s*\(\s*0(?:us|ns|s)?\s+0(?:v)?\s+.*0(?:v)?\s*\)$', line_str, re.IGNORECASE))
+                    
+                    if target_pair is not None:
+                        old_idx = seen_v_sources[target_pair]
+                        old_line = clean_lines[old_idx]
+                        old_dynamic = any(term in old_line.upper() for term in ["PULSE", "SINE", "AC "]) or ("PWL" in old_line.upper() and not re.match(r'^PWL\s*\(\s*0(?:us|ns|s)?\s+0(?:v)?\s+.*0(?:v)?\s*\)$', old_line, re.IGNORECASE))
+                        if is_dynamic and not old_dynamic:
+                            clean_lines[old_idx] = f"; Overridden static bias source: {clean_lines[old_idx]}"
+                            seen_v_sources[pair] = len(clean_lines)
+                        else:
+                            line_str = f"; Sanitized duplicate parallel voltage source short: {line_str}"
+                            tokens = []
                     else:
-                        seen_v_pairs.add(pair)
+                        seen_v_sources[pair] = len(clean_lines)
 
             # Clean dynamic V(...) in static .param lines
             if line_str.lower().startswith(".param") and "v(" in line_str.lower():
                 line_str = re.sub(r'v\([a-zA-Z0-9_]+\)', '3.3', line_str, flags=re.IGNORECASE)
 
-            # Fix when clause inequalities (> or < to =) and strip trailing/preceding from/to
+            # Fix when clause inequalities (> or < to =) and strip trailing/preceding from/to/at
             if re.search(r'\bwhen\b', line_str, re.IGNORECASE):
                 # Replace AVG with FIND on when lines
                 line_str = re.sub(r'\bAVG\b', 'FIND', line_str, flags=re.IGNORECASE)
-                # Strip all from=... and to=... occurrences anywhere on the line
+                # Strip all from=... and to=... and at=... occurrences anywhere on the line
                 line_str = re.sub(r'\s+from\s*=\s*\S+', '', line_str, flags=re.IGNORECASE)
                 line_str = re.sub(r'\s+to\s*=\s*\S+', '', line_str, flags=re.IGNORECASE)
                 line_str = re.sub(r'\s+from\s+\S+', '', line_str, flags=re.IGNORECASE)
                 line_str = re.sub(r'\s+to\s+\S+', '', line_str, flags=re.IGNORECASE)
+                line_str = re.sub(r'\s+at\s*=\s*\S+', '', line_str, flags=re.IGNORECASE)
+                line_str = re.sub(r'\s+at\s+\S+', '', line_str, flags=re.IGNORECASE)
 
                 # Replace > or < after when with =
                 parts = re.split(r'(\bwhen\s+)', line_str, flags=re.IGNORECASE)
@@ -284,6 +371,10 @@ XDUT {pin_names_str} {subckt_name}
                 line_str = re.sub(r'\s+from\s*=\s*\S+\s+to\s*=\s*\S+.*$', '', line_str, flags=re.IGNORECASE)
                 line_str = re.sub(r'\s+from\s+\S+\s+to\s+\S+.*$', '', line_str, flags=re.IGNORECASE)
 
+            # In .meas tran/ac: if param has at=..., change param to find
+            if re.search(r'^\.meas\s+\S+\s+\S+\s+param\s+.+?\bat\s*=', line_str, re.IGNORECASE):
+                line_str = re.sub(r'^(\.meas\s+\S+\s+\S+\s+)param\s+', r'\1find ', line_str, flags=re.IGNORECASE)
+
             # Strip unsupported HSPICE functions like FIND PERIOD(...) or FREQ(...) or PERIOD V(...)
             if re.search(r'^\.meas\s+\S+\s+\S+\s+(?:freq|period|pulsewidth|stdev)\b', line_str, re.IGNORECASE) or \
                any(bad_fn in line_str.upper() for bad_fn in ["PERIOD(", "FREQ(", "PULSEWIDTH(", "STDEV("]):
@@ -293,9 +384,9 @@ XDUT {pin_names_str} {subckt_name}
             if re.search(r'\b(?:max|min)\s*\([^)]*,[^)]*,', line_str, re.IGNORECASE):
                 line_str = f"; Sanitized multi-arg MAX/MIN meas: {line_str}"
 
-            # Fix PWL non-increasing 0s -> 0.00s
+            # Fix PWL non-monotonic timestamps across all points
             if "PWL" in line_str.upper():
-                line_str = re.sub(r'PWL\s*\(\s*0(?:us|ns|s|V)?\s+([0-9\.\-a-zA-Z]+)\s+0(?:\.0+)?(?:us|ns|s)?\s+', r'PWL(0s \1 10ns ', line_str, flags=re.IGNORECASE)
+                line_str = self._fix_pwl_monotonicity(line_str)
 
             # Strip invalid rshunt from .options
             if line_str.lower().startswith(".options"):
@@ -309,6 +400,14 @@ XDUT {pin_names_str} {subckt_name}
                 if len(m_toks) >= 2 and m_toks[1].lower() not in valid_types:
                     default_type = "tran" if "tran" in deck.lower() else "op"
                     line_str = f"{m_toks[0]} {default_type} " + " ".join(m_toks[1:])
+                # Deduplicate measurement names to avoid "already defined elsewhere" error
+                m_toks = line_str.split()
+                if len(m_toks) >= 3:
+                    meas_name = m_toks[2].upper()
+                    if meas_name in seen_meas_names:
+                        line_str = f"; Sanitized duplicate meas name: {line_str}"
+                    else:
+                        seen_meas_names.add(meas_name)
 
             # Ensure action keyword like FIND exists before bare V(...) or I(...) in .meas directives
             line_str = re.sub(r'^(\.meas\s+\S+\s+\S+\s+)([VIvi]\()', r'\1FIND \2', line_str, flags=re.IGNORECASE)
@@ -333,6 +432,10 @@ XDUT {pin_names_str} {subckt_name}
             if line_str.lower().startswith(".end"):
                 has_end = True
             clean_lines.append(line_str)
+
+        # Guarantee at least one valid simulation directive
+        if not seen_sim_directive and sim_type:
+            clean_lines.insert(len(clean_lines)-1 if has_end else len(clean_lines), sim_type)
 
         content = "\n".join(clean_lines)
         if ".options" not in content.lower():
