@@ -8,6 +8,7 @@ from .openrouter_client import OpenRouterClient
 from .pdf_to_graph import PDFDatasheetParser, HardwareKnowledgeGraphBuilder, PortDependencyGraphExtractor
 from .circuit_synthesis import AICircuitArchitect, NetlistValidator
 from .neuro_symbolic_verifier import TestbenchSynthesizer, ClosedLoopEvaluator
+from .visualization import ProcessVisualizer
 
 logger = logging.getLogger("AutonomousAnalogDesignAgent")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -229,6 +230,16 @@ class AutonomousAnalogDesignAgent:
         report_json_path = os.path.join(self.output_dir, f"{safe_part_name}_DESIGN_SUMMARY.json")
         with open(report_json_path, "w", encoding="utf-8") as f:
             json.dump(report["summary"], f, indent=2)
+
+        # Generate Interactive Visual Dashboard for this IC
+        try:
+            dashboard_html_path = os.path.join(self.output_dir, f"{safe_part_name}_VISUAL_DASHBOARD.html")
+            ic_data = ProcessVisualizer.load_ic_data_from_directory(self.output_dir)
+            if ic_data:
+                ProcessVisualizer.export_dashboard([ic_data], dashboard_html_path)
+                logger.info(f"Visual process dashboard generated at: {dashboard_html_path}")
+        except Exception as e:
+            logger.warning(f"Could not generate visual dashboard: {e}")
 
         logger.info(f"Design completed! Final report saved to: {report_md_path}")
         return report
