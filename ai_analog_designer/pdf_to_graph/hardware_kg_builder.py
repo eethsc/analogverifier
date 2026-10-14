@@ -137,11 +137,16 @@ OUTPUT JSON FORMAT:
                 src = PDFDatasheetParser.sanitize_pin_name(dep.get("source", ""))
                 tgt = PDFDatasheetParser.sanitize_pin_name(dep.get("target", ""))
                 if src in G and tgt in G and src != tgt:
+                    raw_delay = dep.get("settling_delay_us")
+                    try:
+                        delay_us = float(raw_delay) if raw_delay is not None else 10.0
+                    except (ValueError, TypeError):
+                        delay_us = 10.0
                     G.add_edge(
                         src, tgt,
                         relation=dep.get("dependency_type", "DEPENDS_ON"),
-                        settling_delay_us=dep.get("settling_delay_us", 10.0),
-                        condition=dep.get("condition", "")
+                        settling_delay_us=delay_us,
+                        condition=dep.get("condition") or ""
                     )
 
         # Add Electrical Parameters

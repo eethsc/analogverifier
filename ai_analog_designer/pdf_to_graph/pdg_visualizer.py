@@ -158,7 +158,13 @@ class PDGVisualizer:
         # Draw dependency arrows directly from graph edges if available
         if pdg and len(pdg.edges()) > 0:
             for u, v, data in pdg.edges(data=True):
-                delay_us = data.get("delay_us", data.get("weight", 0.0) * 1e6)
+                raw_delay = data.get("delay_us")
+                if raw_delay is None:
+                    raw_delay = data.get("weight", 0.0) * 1e6
+                try:
+                    delay_us = float(raw_delay) if raw_delay is not None else 0.0
+                except (ValueError, TypeError):
+                    delay_us = 0.0
                 cond = data.get("condition", "")
                 label = f"{delay_us:.1f}us: {cond}" if cond else f"{delay_us:.1f}us"
                 lines.append(f'    {u} -->|"{label}"| {v}')
@@ -263,8 +269,14 @@ class PDGVisualizer:
             y2 = n2["y"]
             dx = max(30, abs(x2 - x1) / 2)
             d = f'M {x1} {y1} C {x1+dx} {y1}, {x2-dx} {y2}, {x2} {y2}'
-            delay_val = data.get("delay_us", data.get("weight", 0.0) * 1e6)
-            cond_str = data.get("condition", "")
+            raw_delay = data.get("delay_us")
+            if raw_delay is None:
+                raw_delay = data.get("weight", 0.0) * 1e6
+            try:
+                delay_val = float(raw_delay) if raw_delay is not None else 0.0
+            except (ValueError, TypeError):
+                delay_val = 0.0
+            cond_str = data.get("condition") or ""
 
             svg_parts.append(
                 f'<path d="{d}" fill="none" stroke="#334155" stroke-width="1.6" stroke-dasharray="4,3" marker-end="url(#pdg-arr)">'

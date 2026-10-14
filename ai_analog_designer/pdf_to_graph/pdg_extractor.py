@@ -147,17 +147,22 @@ class PortDependencyGraphExtractor:
                 src = dep.get("source")
                 tgt = dep.get("target")
                 if src in pdg and tgt in pdg and src != tgt:
-                    delay_us = float(dep.get("settling_delay_us", 10.0))
+                    raw_delay = dep.get("settling_delay_us")
+                    try:
+                        delay_us = float(raw_delay) if raw_delay is not None else 10.0
+                    except (ValueError, TypeError):
+                        delay_us = 10.0
+
                     # If datasheet specified explicit turn-on settling time, respect it
-                    if timing_specs["turnon_settling_us"] and "output" in pdg.nodes[tgt].get("role", "").lower():
-                        delay_us = max(delay_us, timing_specs["turnon_settling_us"])
+                    if timing_specs.get("turnon_settling_us") and "output" in pdg.nodes[tgt].get("role", "").lower():
+                        delay_us = max(delay_us, float(timing_specs["turnon_settling_us"]))
 
                     pdg.add_edge(
                         src, tgt,
                         weight=delay_us * 1e-6 * self.delta_multiplier,
                         delay_us=delay_us,
                         dependency_type=dep.get("dependency_type", "PHYSICAL_DEPENDENCY"),
-                        condition=dep.get("condition", "Datasheet Direct Specification")
+                        condition=dep.get("condition") or "Datasheet Direct Specification"
                     )
                     injected_edges.add((src, tgt))
 
