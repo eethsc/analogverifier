@@ -16,7 +16,7 @@ from ai_analog_designer.visualization import ProcessVisualizer
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("InteractiveDesigner")
 
-def run_cli_design(pdf_path=None, prompt=None, output_dir=None, iterations=2, open_dashboard=True):
+def run_cli_design(pdf_path=None, prompt=None, output_dir=None, iterations=10, open_dashboard=True):
     if not output_dir:
         timestamp = time.strftime("%Y%m%d_%H%M%S")
         output_dir = os.path.abspath(f"output_design/custom_run_{timestamp}")
@@ -87,8 +87,8 @@ def interactive_terminal_wizard():
         print("Error: You must provide either a PDF datasheet path or a natural language prompt.")
         sys.exit(1)
 
-    iters_in = input("\nEnter number of closed-loop iterations (default: 2): ").strip()
-    iterations = int(iters_in) if iters_in.isdigit() else 2
+    iters_in = input("\nEnter number of closed-loop iterations (default: 10): ").strip()
+    iterations = int(iters_in) if iters_in.isdigit() else 10
 
     run_cli_design(pdf_path=pdf_path, prompt=prompt_in, iterations=iterations, open_dashboard=True)
 
@@ -96,7 +96,7 @@ def main():
     parser = argparse.ArgumentParser(description="On-Demand Autonomous Analog Circuit Synthesis & Verification.")
     parser.add_argument("--pdf", help="Path to custom analog IC datasheet PDF.")
     parser.add_argument("--prompt", help="Natural language circuit specification / custom design requirements.")
-    parser.add_argument("--iterations", type=int, default=2, help="Number of closed-loop iterations (default: 2).")
+    parser.add_argument("--iterations", type=int, default=10, help="Number of closed-loop iterations (default: 10).")
     parser.add_argument("--output-dir", help="Output directory for synthesized netlists & reports.")
     parser.add_argument("--web", action="store_true", help="Launch the Web Studio browser interface.")
     parser.add_argument("--port", type=int, default=8080, help="Port for Web Studio (default: 8080).")

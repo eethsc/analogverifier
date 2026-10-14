@@ -32,7 +32,7 @@ class AutonomousAnalogDesignAgent:
         model: str = "google/gemini-2.5-flash",
         output_dir: str = "output_design",
         simulator_path: Optional[str] = None,
-        max_iterations: int = 3
+        max_iterations: int = 10
     ):
         self.output_dir = os.path.abspath(output_dir)
         os.makedirs(self.output_dir, exist_ok=True)
@@ -112,7 +112,8 @@ Return ONLY valid JSON.
         datasheet_pdf_path: Optional[str] = None,
         user_prompt: Optional[str] = None,
         max_pages: int = 12,
-        progress_callback: Optional[Any] = None
+        progress_callback: Optional[Any] = None,
+        max_iterations: Optional[int] = None
     ) -> Dict[str, Any]:
         """
         Executes the entire end-to-end pipeline:
@@ -212,12 +213,13 @@ Return ONLY valid JSON.
         design_iterations = []
         final_netlist_path = None
         final_evaluation = None
+        total_loop_budget = max_iterations if max_iterations is not None else self.max_iterations
 
-        for iteration in range(1, self.max_iterations + 1):
+        for iteration in range(1, total_loop_budget + 1):
             if progress_callback:
                 progress_callback(3, f"Phase 3: AI Netlist Synthesis (Loop {iteration})", "Synthesizing transistor-level SPICE netlist from first principles...")
 
-            logger.info(f"--- Iteration {iteration}/{self.max_iterations}: AI Netlist Synthesis ---")
+            logger.info(f"--- Iteration {iteration}/{total_loop_budget}: AI Netlist Synthesis ---")
             self.tracer.start_span(3, f"Phase 3: AI Netlist Synthesis (Loop {iteration})", inputs={
                 "iteration": iteration,
                 "subckt_name": subckt_name,

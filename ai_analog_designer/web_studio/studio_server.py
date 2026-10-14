@@ -220,7 +220,7 @@ class StudioRequestHandler(SimpleHTTPRequestHandler):
 
             pdf_path = payload.get("pdf_path")
             user_prompt = payload.get("user_prompt", "").strip()
-            max_iterations = int(payload.get("max_iterations", 2))
+            max_iterations = int(payload.get("max_iterations", 10))
 
             if not pdf_path and not user_prompt:
                 self.send_json({"error": "Either a PDF datasheet or a natural language prompt is required."}, status=400)
@@ -571,8 +571,10 @@ class StudioRequestHandler(SimpleHTTPRequestHandler):
               <label class="block text-slate-400 font-semibold mb-1">Max Closed Loops:</label>
               <select id="maxItersSelect" class="w-full bg-slate-900 border border-[var(--border)] text-slate-200 rounded-xl px-3 py-2 focus:outline-none focus:border-sky-400">
                 <option value="1">1 Iteration (Fast)</option>
-                <option value="2" selected>2 Iterations (Self-Healing)</option>
-                <option value="3">3 Iterations (Deep)</option>
+                <option value="2">2 Iterations</option>
+                <option value="3">3 Iterations</option>
+                <option value="5">5 Iterations</option>
+                <option value="10" selected>10 Iterations (Max Convergence - Default)</option>
               </select>
             </div>
             <div>
@@ -889,7 +891,7 @@ class StudioRequestHandler(SimpleHTTPRequestHandler):
     async function launchDesign() {
       const targetPdf = getTargetPdfPath();
       const prompt = document.getElementById('userPromptInput').value.trim();
-      const maxIters = parseInt(document.getElementById('maxItersSelect').value);
+      const maxIters = parseInt(document.getElementById('maxItersSelect').value, 10) || 10;
 
       if (!targetPdf && !prompt) {
         alert('Please provide either a datasheet PDF or a natural language description.');

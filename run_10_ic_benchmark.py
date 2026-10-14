@@ -133,7 +133,7 @@ def main():
 
         agent = AutonomousAnalogDesignAgent(
             output_dir=ic_output_dir,
-            max_iterations=2
+            max_iterations=10
         )
 
         t0 = time.time()
