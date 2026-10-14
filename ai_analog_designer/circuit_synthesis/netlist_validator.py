@@ -111,8 +111,29 @@ class NetlistValidator:
                 clean_lines.append(f"* Removed subckt directive: {line_str}")
                 continue
 
-            # For BJTs (Q...), strip invalid MOSFET sizing parameters W=... L=...
             tokens = line_str.split()
+            first_tok = tokens[0] if tokens else ""
+
+            # Check for incomplete / truncated device lines (e.g. bare "C_OUTR")
+            if tokens and first_tok[0].upper() in "RCLMQ" and not first_tok.startswith("."):
+                f_char = first_tok[0].upper()
+                if f_char in "RCL" and len(tokens) < 4:
+                    clean_lines.append(f"* Truncated element removed: {line_str}")
+                    continue
+                elif f_char == "M" and len(tokens) < 6:
+                    clean_lines.append(f"* Truncated element removed: {line_str}")
+                    continue
+                elif f_char == "Q" and len(tokens) < 5:
+                    clean_lines.append(f"* Truncated element removed: {line_str}")
+                    continue
+
+            # For MOSFETs (M...), remove parentheses around parameters e.g. (W=10u L=0.5u) -> W=10u L=0.5u
+            if tokens and first_tok.upper().startswith("M") and not first_tok.startswith("."):
+                line = re.sub(r'\(([\w\.\s=+-]+)\)', r'\1', line)
+                line_str = line.strip()
+                tokens = line_str.split()
+
+            # For BJTs (Q...), strip invalid MOSFET sizing parameters W=... L=...
             if tokens and tokens[0].upper().startswith("Q") and not tokens[0].startswith("."):
                 line_str = re.sub(r'\b[WL]=\S+', '', line_str, flags=re.IGNORECASE).strip()
                 line = re.sub(r'\b[WL]=\S+', '', line, flags=re.IGNORECASE).strip()

@@ -233,6 +233,14 @@ XDUT {pin_names_str} {subckt_name}
 
             # Remove voltage sources driving output/feedback pins or duplicating parallel node sources
             tokens = line_str.split()
+            if tokens and tokens[0].upper().startswith("V") and len(tokens) >= 4 and not tokens[0].startswith("."):
+                # If a resistor parameter name was accidentally included: e.g. V_PULLUP N1 N2 R_PULLUP 100k
+                if any(t.upper().startswith("R_") for t in tokens[3:]):
+                    r_name = re.sub(r'^[Vv]', 'R', tokens[0])
+                    val_toks = [t for t in tokens[3:] if not t.upper().startswith("R_")]
+                    line_str = f"{r_name} {tokens[1]} {tokens[2]} {' '.join(val_toks)}"
+                    tokens = line_str.split()
+
             if tokens and tokens[0].upper().startswith("V") and len(tokens) >= 3 and not tokens[0].startswith("."):
                 node_pos = tokens[1].upper()
                 node_neg = tokens[2].upper()

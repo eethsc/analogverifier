@@ -19,7 +19,7 @@ logger = logging.getLogger("StudioServer")
 
 # In-memory registry of asynchronous design generation tasks
 TASKS = {}
-TASKS_LOCK = threading.Lock()
+TASKS_LOCK = threading.RLock()
 
 class StudioRequestHandler(SimpleHTTPRequestHandler):
     """HTTP Request Handler for the Interactive Analog Circuit Design Studio."""
@@ -311,7 +311,8 @@ class StudioRequestHandler(SimpleHTTPRequestHandler):
                         "iterations_count": len(result.get("summary", {}).get("iterations", [])),
                         "netlist_code": final_netlist
                     }
-                    progress_cb(6, "Success", "Autonomous analog design & verification cycle finished successfully!")
+                    timestamp = time.strftime("%H:%M:%S")
+                    TASKS[task_id]["logs"].append(f"[{timestamp}] [Phase 6: Success] Autonomous analog design & verification cycle finished successfully!")
         except Exception as e:
             logger.error(f"Task {task_id} failed: {e}", exc_info=True)
             with TASKS_LOCK:
