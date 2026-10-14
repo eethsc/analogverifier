@@ -272,9 +272,10 @@ Return ONLY valid JSON.
                 specifications=specifications,
                 pdg_schedule=pdg_schedule
             )
+            tb_names = [tb.get("name", str(tb)) for tb in testbenches] if isinstance(testbenches, list) else list(testbenches.keys())
             self.tracer.end_span(outputs={
                 "testbench_count": len(testbenches),
-                "testbenches": list(testbenches.keys())
+                "testbenches": tb_names
             })
 
             # 4.2 Run LTspice batch simulations & evaluate SymPy oracles

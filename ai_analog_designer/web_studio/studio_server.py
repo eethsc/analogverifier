@@ -131,8 +131,8 @@ class StudioRequestHandler(SimpleHTTPRequestHandler):
             res = PDGVisualizer.extract_from_pdf(pdf_path)
             pins = res["pins"]
             schedule = res["schedule"]
-            svg_markup = PDGVisualizer.to_svg(pins, schedule)
-            mermaid_code = PDGVisualizer.to_mermaid(pins, schedule)
+            svg_markup = PDGVisualizer.to_svg(pins, schedule, pdg=res.get("pdg"))
+            mermaid_code = PDGVisualizer.to_mermaid(pins, schedule, pdg=res.get("pdg"))
 
             self.send_json({
                 "status": "success",

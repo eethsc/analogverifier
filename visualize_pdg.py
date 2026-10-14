@@ -5,6 +5,7 @@ Outputs Mermaid DAG, terminal activation schedule, and generates interactive HTM
 
 import os
 import sys
+import re
 import argparse
 import webbrowser
 import logging
@@ -62,11 +63,12 @@ def main():
         print(f"{pname:<12} | {role:<12} | {direction:<12} | {delay_us:.2f} \u03bcs")
 
     print("\n📊 Mermaid Diagram Topology:")
-    mermaid = PDGVisualizer.to_mermaid(pins, schedule)
+    mermaid = PDGVisualizer.to_mermaid(pins, schedule, pdg=res.get("pdg"))
     print(mermaid)
 
     # Export interactive HTML
-    out_html = args.output_html or os.path.abspath(os.path.join("benchmark_results", f"{ic_name}_PDG_VISUALIZER.html"))
+    safe_ic_name = re.sub(r'[^a-zA-Z0-9_\-]', '_', ic_name)
+    out_html = args.output_html or os.path.abspath(os.path.join("benchmark_results", f"{safe_ic_name}_PDG_VISUALIZER.html"))
     PDGVisualizer.export_interactive_html(pdf_path, out_html)
     print("\n" + "="*80)
     print(f"🎉 Interactive PDG HTML Simulator Exported: file:///{out_html.replace(os.sep, '/')}")
