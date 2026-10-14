@@ -155,12 +155,13 @@ OUTPUT JSON FORMAT:
                 continue
             sym = param.get("symbol") or param.get("name") or f"PARAM_{idx}"
             param["symbol"] = sym
-            G.add_node(sym, node_type="SPEC_PARAM", data=param)
-            G.add_edge(ic_name, sym, relation="SPECIFIES")
+            param_node_id = f"SPEC_{sym}_{idx}"
+            G.add_node(param_node_id, node_type="SPEC_PARAM", data=param, symbol=sym)
+            G.add_edge(ic_name, param_node_id, relation="SPECIFIES")
             for rp in param.get("related_pins", []):
                 rp_clean = PDFDatasheetParser.sanitize_pin_name(rp)
                 if rp_clean in G:
-                    G.add_edge(rp_clean, sym, relation="GOVERNS")
+                    G.add_edge(rp_clean, param_node_id, relation="GOVERNS")
 
         # Store raw extraction metadata
         G.graph["raw_extraction"] = data

@@ -198,12 +198,26 @@ Return ONLY valid JSON.
         pdg, pdg_schedule, levels = self.pdg_extractor.extract_pdg(hkg)
         pdg_res = {"pdg": pdg, "schedule": pdg_schedule, "levels": levels}
 
+        from .pdf_to_graph import PDGFidelityVerifier
+        fidelity_audit = PDGFidelityVerifier.audit_pdg(hkg, pdg, pdg_schedule)
+        pdg_res["fidelity_audit"] = fidelity_audit
+        logger.info(f"  [PDG Fidelity Audit] Score: {fidelity_audit.get('fidelity_score_pct')}% | Status: {fidelity_audit.get('status')}")
+
+        audit_file = os.path.join(self.output_dir, f"{safe_part_name}_PDG_FIDELITY_AUDIT.json")
+        try:
+            with open(audit_file, "w", encoding="utf-8") as f:
+                json.dump(fidelity_audit, f, indent=2)
+        except Exception as e:
+            logger.warning(f"Failed to write fidelity audit: {e}")
+
         for pin_name, act_time in pdg_schedule.items():
             logger.info(f"  [PDG Schedule] Pin {pin_name:10s} -> Activation Delay: {act_time*1e6:.2f} us")
 
         self.tracer.end_span(outputs={
             "pin_schedule_us": {k: round(v*1e6, 2) for k, v in pdg_schedule.items()},
-            "levels_count": len(levels)
+            "levels_count": len(levels),
+            "fidelity_score_pct": fidelity_audit.get("fidelity_score_pct"),
+            "fidelity_status": fidelity_audit.get("status")
         })
 
         # -------------------------------------------------------------

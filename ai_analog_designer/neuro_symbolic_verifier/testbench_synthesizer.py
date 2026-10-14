@@ -42,9 +42,12 @@ class TestbenchSynthesizer:
             sym = s.get("symbol", "").lower()
             desc = (s.get("description", "") + " " + s.get("parameter", "")).lower()
 
-            if any(k in sym or k in desc for k in ["gain", "gbw", "bw", "bandwidth", "phase", "pm", "cmrr", "psrr", "ac"]):
+            is_ac = any(k in sym or k in desc for k in ["open_loop_gain", "gbw", "bandwidth", "phase_margin", "cmrr", "psrr"]) or                     bool(re.search(r'\bac\s+gain\b', desc)) or (bool(re.search(r'\bac\b', sym)) and "accuracy" not in sym)
+            is_tran = any(k in sym or k in desc for k in ["slew", "sr", "delay", "tpd", "tr", "tf", "rise", "fall", "period", "freq", "fosc", "fout", "fmax", "jitter", "pulse", "thd", "lock", "ripple", "overshoot", "undershoot", "startup", "settling", "efficiency", "soft-start"])
+
+            if is_ac and not is_tran:
                 ac_specs.append(s)
-            elif any(k in sym or k in desc for k in ["slew", "sr", "delay", "tpd", "tr", "tf", "rise", "fall", "period", "freq", "fosc", "fout", "fmax", "jitter", "pulse", "thd", "lock"]):
+            elif is_tran:
                 tran_specs.append(s)
             else:
                 dc_specs.append(s)
@@ -54,16 +57,21 @@ class TestbenchSynthesizer:
         pin_names_str = self._get_actual_subckt_pins(netlist_path, subckt_name, expected_pin_names_str)
         schedule_str = "\n".join([f"  {p}: {t*1e6:.2f} us" for p, t in pdg_schedule.items()])
 
+        max_sched_time = max(pdg_schedule.values()) if pdg_schedule else 50e-6
+        tran_stop = max(50e-6, max_sched_time * 2.0)
+        tran_step = tran_stop / 500.0
+        tran_cmd = f".tran {tran_step*1e6:.2f}u {tran_stop*1e6:.2f}u"
+
         categories = []
         if dc_specs:
             categories.append(("dc_op", "DC Operating Point & Static Characteristics", dc_specs, ".op"))
         if ac_specs:
             categories.append(("ac_sweep", "AC Frequency Sweep & Small-Signal Characteristics", ac_specs, ".ac dec 20 1 100Meg"))
         if tran_specs:
-            categories.append(("transient", "Transient Dynamics & Switching Characteristics", tran_specs, ".tran 0.5n 300n"))
+            categories.append(("transient", "Transient Dynamics & Switching Characteristics", tran_specs, tran_cmd))
 
         if not categories:
-            categories.append(("full_verification", "Complete Functional Verification", specifications, ".tran 0.5n 300n"))
+            categories.append(("full_verification", "Complete Functional Verification", specifications, tran_cmd))
 
         for tb_id, title, cat_specs, sim_type in categories:
             tb_data = self._generate_testbench_with_llm(
@@ -272,7 +280,23 @@ XDUT {pin_names_str} {subckt_name}
         seen_v_sources = {}
         seen_meas_names = set()
         seen_sim_directive = False
-        target_sim_cmd = sim_type.strip().split()[0].lower() if sim_type else ".tran"
+        # Check measurement types in raw deck
+        has_meas_tran = any(re.search(r'^\s*\.meas\s+tran', l, re.IGNORECASE) for l in lines)
+        has_meas_ac = any(re.search(r'^\s*\.meas\s+ac', l, re.IGNORECASE) for l in lines)
+        has_meas_op = any(re.search(r'^\s*\.meas\s+op', l, re.IGNORECASE) for l in lines)
+
+        # Auto-align sim command if LLM wrote tran measurements for dc_op or ac_sweep
+        if has_meas_tran and not has_meas_ac and not has_meas_op:
+            target_sim_cmd = ".tran"
+            if not sim_type.strip().lower().startswith(".tran"):
+                sim_type = ".tran 0.1u 50u"
+        elif has_meas_ac and not has_meas_tran and not has_meas_op:
+            target_sim_cmd = ".ac"
+        elif has_meas_op and not has_meas_tran and not has_meas_ac:
+            target_sim_cmd = ".op"
+        else:
+            target_sim_cmd = sim_type.strip().split()[0].lower() if sim_type else ".tran"
+
         out_pins = {
             p['name'].upper() for p in pins 
             if p.get('direction', '').upper() in ['OUTPUT', 'OUT'] or p.get('role', '').upper() in ['OUTPUT', 'FEEDBACK', 'STATUS']
@@ -432,6 +456,19 @@ XDUT {pin_names_str} {subckt_name}
             if line_str.lower().startswith(".end"):
                 has_end = True
             clean_lines.append(line_str)
+
+        # Guarantee XDUT is instantiated
+        has_dut = any(
+            l.strip().upper().startswith("XDUT ") or 
+            (l.strip().upper().startswith("X") and subckt_name.upper() in l.strip().upper())
+            for l in clean_lines
+        )
+        if not has_dut:
+            ins_idx = len(clean_lines) - 1 if has_end else len(clean_lines)
+            for i, l in enumerate(clean_lines):
+                if l.strip().upper().startswith("V") or l.strip().upper().startswith("R"):
+                    ins_idx = i + 1
+            clean_lines.insert(ins_idx, f"\n* Auto-injected DUT Instance\nXDUT {pin_names_str} {subckt_name}\n")
 
         # Guarantee at least one valid simulation directive
         if not seen_sim_directive and sim_type:
