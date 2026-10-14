@@ -46,27 +46,115 @@ class AutonomousAnalogDesignAgent:
         self.testbench_synthesizer = TestbenchSynthesizer(llm_client=self.llm)
         self.evaluator = ClosedLoopEvaluator(simulator_path=simulator_path)
 
-    def run(self, datasheet_pdf_path: str, max_pages: int = 12) -> Dict[str, Any]:
+    def extract_specs_from_prompt(self, user_prompt: str) -> Dict[str, Any]:
         """
-        Executes the entire end-to-end pipeline from arbitrary IC PDF to 100% verified SPICE netlist.
+        Uses LLM to parse natural language circuit design requests into structured HKG elements
+        (IC metadata, pins with roles, electrical parameters with SymPy intervals).
         """
-        logger.info(f"=== Starting Autonomous Analog Design for: {datasheet_pdf_path} ===")
+        sys_prompt = """You are an Expert Analog IC Specification & System Architect.
+Convert the user's natural language circuit design request into a complete, structured JSON specification schema:
+{
+  "ic_device": {
+    "name": "<Part or Circuit Name, e.g. CMOS_OPAMP_RAIL2RAIL>",
+    "category": "<e.g. Operational Amplifier, Bandgap Reference, Comparator, Audio Amp, PLL, etc.>",
+    "description": "<Detailed description of requirements>"
+  },
+  "pins": [
+    {
+      "name": "<Pin Name, e.g. VDD, GND, INP, INM, OUT, VREF, EN>",
+      "role": "<POWER | GROUND | BIAS | SIGNAL | OUTPUT | CONTROL | FEEDBACK>",
+      "direction": "<INPUT | OUTPUT | BIDIRECTIONAL | POWER | GROUND>",
+      "description": "<brief role>"
+    }
+  ],
+  "electrical_parameters": [
+    {
+      "symbol": "<e.g. VDD, VOUT, GAIN, BW, PM, IB, IQ, VOS, CMRR, PSRR, SLEW>",
+      "name": "<Full parameter name>",
+      "min": <float or null>,
+      "typ": <float or null>,
+      "max": <float or null>,
+      "unit": "<e.g. V, mV, uA, mA, dB, MHz, deg, V/us, Ohm>",
+      "test_conditions": "<e.g. VDD=3.3V, Temp=25C, RL=10k, CL=10pF>"
+    }
+  ]
+}
+Return ONLY valid JSON.
+"""
+        resp = self.llm.chat_completion(
+            messages=[
+                {"role": "system", "content": sys_prompt},
+                {"role": "user", "content": f"User Natural Language Requirement:\n{user_prompt}"}
+            ],
+            temperature=0.1
+        )
+        data = self.llm.parse_json_response(resp)
+        if not data or not isinstance(data, dict):
+            data = {
+                "ic_device": {"name": "CUSTOM_ANALOG_IC", "category": "Custom Circuit", "description": user_prompt},
+                "pins": [
+                    {"name": "VDD", "role": "POWER", "direction": "INPUT", "description": "Positive Supply"},
+                    {"name": "GND", "role": "GROUND", "direction": "INPUT", "description": "Ground"},
+                    {"name": "INP", "role": "SIGNAL", "direction": "INPUT", "description": "Non-inverting Input"},
+                    {"name": "INM", "role": "SIGNAL", "direction": "INPUT", "description": "Inverting Input"},
+                    {"name": "OUT", "role": "OUTPUT", "direction": "OUTPUT", "description": "Output"}
+                ],
+                "electrical_parameters": [
+                    {"symbol": "VDD", "name": "Supply Voltage", "min": 3.0, "typ": 3.3, "max": 3.6, "unit": "V", "test_conditions": "Nominal"},
+                    {"symbol": "VOUT", "name": "Output Voltage", "min": 0.1, "typ": 1.65, "max": 3.2, "unit": "V", "test_conditions": "Open-loop"}
+                ]
+            }
+        return data
+
+    def run(
+        self,
+        datasheet_pdf_path: Optional[str] = None,
+        user_prompt: Optional[str] = None,
+        max_pages: int = 12,
+        progress_callback: Optional[Any] = None
+    ) -> Dict[str, Any]:
+        """
+        Executes the entire end-to-end pipeline:
+        Supports:
+          1. Arbitrary PDF datasheet upload
+          2. Natural language circuit specification requests (with or without PDF)
+          3. Real-time progress updates via progress_callback
+        """
+        logger.info(f"=== Starting Autonomous Analog Design (PDF: {datasheet_pdf_path}, Prompt: {user_prompt}) ===")
 
         # -------------------------------------------------------------
-        # Phase 1: PDF Layout Parsing & Hardware Knowledge Graph
+        # Phase 1: Knowledge Ingestion (PDF Parsing and/or User Prompt)
         # -------------------------------------------------------------
-        logger.info("Phase 1: Parsing PDF layout, tables, and text sections...")
-        self.pdf_parser.max_pages = max_pages
-        parsed_doc = self.pdf_parser.parse_pdf(datasheet_pdf_path)
-        
-        logger.info("Constructing Hardware Knowledge Graph (HKG) from parsed document...")
-        hkg = self.kg_builder.build_kg_from_parsed_pdf(parsed_doc)
-        raw_extraction = hkg.graph.get("raw_extraction", {})
-        
+        if progress_callback:
+            progress_callback(1, "Phase 1: Knowledge Ingestion", "Parsing datasheet and natural language requirements...")
+
+        if datasheet_pdf_path and os.path.exists(datasheet_pdf_path):
+            logger.info(f"Phase 1: Parsing PDF layout, tables, and text sections from: {datasheet_pdf_path}")
+            self.pdf_parser.max_pages = max_pages
+            parsed_doc = self.pdf_parser.parse_pdf(datasheet_pdf_path)
+            
+            logger.info("Constructing Hardware Knowledge Graph (HKG) from parsed document...")
+            hkg = self.kg_builder.build_kg_from_parsed_pdf(parsed_doc)
+            raw_extraction = hkg.graph.get("raw_extraction", {})
+        elif user_prompt:
+            logger.info("Phase 1: No PDF provided; extracting specifications directly from natural language prompt...")
+            raw_extraction = self.extract_specs_from_prompt(user_prompt)
+            # Create synthetic HKG
+            from .pdf_to_graph.hardware_kg_builder import HardwareKnowledgeGraph
+            hkg = HardwareKnowledgeGraph()
+            hkg.graph["raw_extraction"] = raw_extraction
+            hkg.graph["nodes"] = [raw_extraction.get("ic_device", {})]
+        else:
+            raise ValueError("Either datasheet_pdf_path or user_prompt must be provided.")
+
         ic_info = raw_extraction.get("ic_device", {"name": "DUT_IC", "category": "ANALOG", "description": ""})
         pins = raw_extraction.get("pins", [])
         specifications = raw_extraction.get("electrical_parameters", [])
         functional_blocks = raw_extraction.get("functional_blocks", [])
+
+        # If user provided a natural language prompt along with PDF, reflect prompt in IC description
+        if user_prompt and datasheet_pdf_path:
+            ic_info["description"] = f"{ic_info.get('description', '')}\n[User Prompt Directives]: {user_prompt}"
 
         part_name = ic_info.get("name", "ANALOG_IC")
         safe_part_name = re.sub(r'[^a-zA-Z0-9_\-]', '_', part_name)
@@ -82,6 +170,9 @@ class AutonomousAnalogDesignAgent:
         # -------------------------------------------------------------
         # Phase 2: Port Dependency Graph (PDG) Scheduling
         # -------------------------------------------------------------
+        if progress_callback:
+            progress_callback(2, "Phase 2: Port Dependency Graph", f"Extracting PDG & topological settling sequence for {len(pins)} pins...")
+
         logger.info("Phase 2: Constructing Port Dependency Graph & Activation Schedule...")
         pdg, pdg_schedule, levels = self.pdg_extractor.extract_pdg(hkg)
         pdg_res = {"pdg": pdg, "schedule": pdg_schedule, "levels": levels}
@@ -98,16 +189,20 @@ class AutonomousAnalogDesignAgent:
         final_evaluation = None
 
         for iteration in range(1, self.max_iterations + 1):
+            if progress_callback:
+                progress_callback(3, f"Phase 3: AI Netlist Synthesis (Loop {iteration})", "Synthesizing transistor-level SPICE netlist from first principles...")
+
             logger.info(f"--- Iteration {iteration}/{self.max_iterations}: AI Netlist Synthesis ---")
 
-            # 3.1 AI Netlist Synthesis (Prompt LLM with specifications and feedback)
+            # 3.1 AI Netlist Synthesis (Prompt LLM with specifications, user prompt, and feedback)
             synth_res = self.circuit_architect.synthesize_netlist(
                 ic_info=ic_info,
                 pins=pins,
                 specifications=specifications,
                 pdg_schedule=pdg_schedule,
                 iteration=iteration,
-                prior_feedback=current_feedback
+                prior_feedback=current_feedback,
+                user_prompt=user_prompt
             )
 
             raw_netlist = synth_res.get("spice_netlist", "")
@@ -129,6 +224,8 @@ class AutonomousAnalogDesignAgent:
             final_netlist_path = netlist_path
 
             # 4.1 Synthesize LTspice Testbenches
+            if progress_callback:
+                progress_callback(4, f"Phase 4: Testbench Generation (Loop {iteration})", "Synthesizing .op, .tran, .ac testbenches aligned with PDG schedule...")
             logger.info(f"Iteration {iteration}: Synthesizing LTspice testbenches using PDG activation schedule...")
             testbenches = self.testbench_synthesizer.synthesize_testbenches(
                 netlist_path=netlist_path,
@@ -139,6 +236,8 @@ class AutonomousAnalogDesignAgent:
             )
 
             # 4.2 Run LTspice batch simulations & evaluate SymPy oracles
+            if progress_callback:
+                progress_callback(5, f"Phase 5: LTspice & SymPy Evaluation (Loop {iteration})", "Executing headless batch simulation & verifying formal intervals...")
             logger.info(f"Iteration {iteration}: Executing LTspice simulations & evaluating SymPy oracles...")
             eval_res = self.evaluator.evaluate_circuit(
                 output_dir=self.output_dir,
@@ -149,6 +248,8 @@ class AutonomousAnalogDesignAgent:
 
             final_evaluation = eval_res
             pass_rate = eval_res["pass_rate_percent"]
+            if progress_callback:
+                progress_callback(6, f"Phase 6: Closed-Loop Diagnostics (Loop {iteration})", f"Pass Rate: {pass_rate:.1f}% ({eval_res['passed_specs']}/{eval_res['total_specs']}). Analyzing shortfalls...")
             logger.info(f"Iteration {iteration} Evaluation Result: Pass Rate = {pass_rate:.1f}% ({eval_res['passed_specs']}/{eval_res['total_specs']} specs passed)")
 
             # Analyze shortfalls in this iteration

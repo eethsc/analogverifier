@@ -20,7 +20,8 @@ class AICircuitArchitect:
         specifications: List[Dict[str, Any]],
         pdg_schedule: Dict[str, float],
         iteration: int = 1,
-        prior_feedback: Optional[str] = None
+        prior_feedback: Optional[str] = None,
+        user_prompt: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Uses OpenRouter LLM to design and synthesize complete SPICE netlist from datasheet specifications.
@@ -42,6 +43,15 @@ class AICircuitArchitect:
             f"  - Pin {p:10s} activation: {t*1e6:.2f} us"
             for p, t in pdg_schedule.items()
         ])
+
+        user_prompt_section = ""
+        if user_prompt:
+            user_prompt_section = f"""
+## USER NATURAL LANGUAGE DIRECTIVES & SPECIAL REQUIREMENTS:
+The user explicitly requested the following custom circuit specifications and design criteria:
+"{user_prompt}"
+You MUST explicitly tailor the circuit topology, bias branches, operating voltages, component values, and pin behavior to satisfy these user instructions alongside the base specifications.
+"""
 
         feedback_section = ""
         if prior_feedback:
@@ -65,6 +75,7 @@ Your task is to synthesize from scratch a complete, highly realistic, physically
 
 ## PORT DEPENDENCY SCHEDULE (PHYSICAL STARTUP SEQUENCE):
 {schedule_summary}
+{user_prompt_section}
 {feedback_section}
 
 ## DESIGN & SPICE REQUIREMENTS:

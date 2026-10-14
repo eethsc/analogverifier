@@ -53,5 +53,9 @@ generated_testbenches/*.log
 generated_netlists/temp_*.sub
 generated_designs/*.log
 generated_designs/*.raw
-generated_designs/*.op.raw
 generated_designs/*.db
+
+# Interactive runs & uploads
+output_interactive/
+output_test_interactive/
+uploads/
