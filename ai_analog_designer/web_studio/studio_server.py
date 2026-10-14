@@ -9,6 +9,7 @@ import threading
 import logging
 from urllib.parse import urlparse, parse_qs
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
+from typing import Dict, Any, List, Optional
 
 from ..autonomous_design_agent import AutonomousAnalogDesignAgent
 from ..visualization import ProcessVisualizer
