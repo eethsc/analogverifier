@@ -1,8 +1,7 @@
 # Autonomous Analog Circuit Designer & Neuro-Symbolic Verifier
 
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Framework: AnalogVerifier](https://img.shields.io/badge/Framework-AnalogVerifier-orange.svg)](https://arxiv.org/abs/2410.xxxxx)
+[![Status: mid-term WIP](https://img.shields.io/badge/Status-mid--term%20WIP-yellow.svg)](#-current-status-mid-term-2026-10-21)
 [![Verification: LTspice](https://img.shields.io/badge/Simulation-LTspice%20XVII%2F24-red.svg)](https://www.analog.com/en/resources/design-tools-and-calculators/ltspice-simulator.html)
 [![Symbolic Engine: SymPy](https://img.shields.io/badge/Oracles-SymPy-blueviolet.svg)](https://www.sympy.org/)
 
@@ -12,7 +11,71 @@ This system ingests unstructured commercial IC datasheets (PDF) and natural lang
 
 ---
 
+## 🚧 Current Status (mid-term, 2026-10-21)
+
+This is a **work in progress** for the mid-term presentation. Summary:
+
+| Stage | Status | Evidence |
+|---|---|---|
+| Phase 1 – PDF → HKG extraction | ✅ **Works and is measured.** Page-classified parsing, column-tagged spec tables, page- and quote-level provenance, two-pass parallel LLM extraction on NVIDIA NIM | PDG fidelity GT score **92.5 / 100** on 8 ICs |
+| Phase 2 – HKG → PDG + schedule σ(p) | ✅ **Works and is measured.** Each edge is marked as datasheet-derived or rule-injected; delays are taken from datasheet timing specs (settling, propagation, SR, GBW) when available | Dependency recall 0.77–1.00, schedule order consistency 1.00 |
+| PDG fidelity verification | ✅ **New.** (A) ground-truth-free provenance audit on every run; (B) ground-truth benchmark | `run_pdg_benchmark.py`, `benchmarks/pdg_groundtruth/` |
+| LLM back-end | ✅ **Replaced.** Provider-agnostic client (NIM / OpenRouter) with streaming, timeouts, model fallback and latency telemetry | `ai_analog_designer/llm_client.py`, latency table below |
+| Phase 3 – netlist synthesis | ⚠️ **Unchanged, not re-validated** since the LLM switch | – |
+| Phase 4 – testbench synthesis | ❌ **Main blocker.** LLM-written testbenches do not emit `.meas` for most specs | legacy run: 0–2 % pass, mostly "not observed" |
+| Phase 5 – oracle and evaluation | ⚠️ Pass rate still uses all specs (including unmeasured ones) as the denominator | `closed_loop_evaluator.py` |
+| Web Studio (browser) | ⚠️ Not re-tested after the changes; a Playwright E2E test is planned | – |
+
+### What changed in this iteration
+1. **LLM provider.** OpenRouter (the key had expired) was replaced by **NVIDIA NIM**.
+   - Default model: `nvidia/nemotron-3-ultra-550b-a55b`.
+   - Fallbacks: `deepseek-ai/deepseek-v4.1-flash`, then `z-ai/glm-5.3-flash`.
+   - The default was chosen from a latency benchmark plus the accuracy benchmark below.
+   - `openrouter_client.OpenRouterClient` is kept as a compatibility alias.
+2. **PDF parser** (`pdf_parser.py`).
+   - Pages are classified as pin / abs-max / recommended / electrical / thermal / ESD / functional, and the table of contents is skipped.
+   - Spec pages are rebuilt from word coordinates with `{MIN}/{TYP}/{MAX}` column tags. Before this, the LLM often put a lone TYP value into the MIN slot.
+3. **HKG builder** (`hardware_kg_builder.py`).
+   - The pin and dependency pass and the spec pass now run as separate prompts. Specs are extracted one page per call, in parallel.
+   - Each pin and spec row must cite a `page` and a verbatim `evidence` quote.
+   - Each spec row is categorised (`ELECTRICAL`, `ABS_MAX`, `RECOMMENDED`, `THERMAL`, `ESD`), so ratings and operating conditions are no longer treated as testable specs.
+   - Pins with the same name are merged into one net (e.g. the four ANODE pins of the TL431 SOIC-8).
+4. **PDG extractor** (`pdg_extractor.py`).
+   - Datasheet edges come first. Precedence-rule edges are added only for pins left without a driver.
+   - Each edge records `origin`, `delay_source` and `kind` (causal or sequencing).
+5. **Fidelity verifier** (`pdg_fidelity_verifier.py`). It was rewritten. The old score was mostly self-referential (for example, "pin coverage" compared the PDG against the same extraction).
+
+### How PDG fidelity is verified
+- **(A) Ground-truth-free audit.** This runs inside the pipeline and writes `*_PDG_FIDELITY_AUDIT.json`. It checks:
+  - every pin name and quote actually appears on the cited page;
+  - every spec number appears on the cited page;
+  - the graph is a DAG, and every output is reachable from a supply;
+  - the share of edges that come from the datasheet rather than from rules;
+  - the share of edge delays that come from datasheet timing specs.
+
+  It catches hallucinations without any labels.
+- **(B) Ground-truth benchmark.** `benchmarks/pdg_groundtruth/*.json` holds 8 hand-labelled ICs: LM358, OPA2134, INA128, LM393, NE555, TL431, LM317 and LM386. Every entry has a page number and an evidence quote. The benchmark reports:
+  - pin precision/recall and role accuracy;
+  - causal dependency precision/recall (full PDG, and the datasheet layer only);
+  - schedule order consistency: σ(u) < σ(v) for every ground-truth dependency;
+  - electrical spec-row recall and min/typ/max value accuracy;
+  - leakage, i.e. how many ABS_MAX/RECOMMENDED rows were wrongly marked ELECTRICAL;
+  - timing-spec recall.
+
+  Weighted GT score = 0.20·pin F1 + 0.10·role + 0.15·dep F1 + 0.05·schedule + 0.20·spec recall + 0.15·value accuracy + 0.10·(1 − leak) + 0.05·timing.
+
+### Known issues / next steps
+1. **Testbench generation.** Replace the LLM-written testbenches with deterministic `.meas` templates per device class (op-amp, comparator, regulator, reference, timer). Calibrate them first against vendor macromodels that ship with LTspice (`LM393.sub`, `NE555.sub`, `LT1013.sub`, ...), so the verifier is known to be correct before it judges LLM netlists.
+2. **Pass-rate reporting.** Report measurement coverage and pass rate among measured specs separately. Restrict the spec set to `category == ELECTRICAL` and the chosen operating condition.
+3. **Rate limiting.** Handle NIM HTTP 429 with a global concurrency limiter, then finish the column-tagging benchmark run for OPA2134 and TL431. Investigate the NE555 spec-recall regression.
+4. Re-run the closed-loop synthesis on the new HKG and record honest pass rates.
+5. Browser E2E test of Web Studio (Playwright), plus `pdf_path` sandboxing in `/api/extract_pdg` and `/api/generate`.
+6. Repository hygiene: 170 git-ignored artefacts (`*.raw`, `*.db`, `*.log`) are still tracked; there are 3 parallel legacy packages (`agent_engine/`, `analog_verifier/`, `ai_analog_designer/`); there are no unit tests yet.
+
+---
+
 ## 📑 Table of Contents
+- [Current Status](#-current-status-mid-term-2026-10-21)
 - [Key Features](#-key-features)
 - [System Architecture](#-system-architecture)
 - [Repository Structure](#-repository-structure)
@@ -21,7 +84,7 @@ This system ingests unstructured commercial IC datasheets (PDF) and natural lang
   - [2. Launching the Interactive Web Studio](#2-launching-the-interactive-web-studio)
   - [3. CLI Usage](#3-cli-usage)
 - [Pipeline Workflow (6 Phases)](#-pipeline-workflow-6-phases)
-- [10 Commercial IC Benchmark Audit](#-10-commercial-ic-benchmark-audit)
+- [Benchmark Results (actual, measured)](#-benchmark-results-actual-measured)
 - [Telemetry & Step-by-Step Tracing](#-telemetry--step-by-step-tracing)
 - [References & Citations](#-references--citations)
 
@@ -154,14 +217,38 @@ python -m venv .venv
 .venv\Scripts\Activate.ps1
 
 # Install required dependencies
-pip install pymupdf networkx sympy
+pip install -r requirements.txt
 ```
 
-#### OpenRouter API Key Setup
-Create a `.env` file in the root directory:
+#### LLM API Key Setup
+Create a `.env` file in the root directory. It is git-ignored, so never commit keys.
+
+NVIDIA NIM is the default provider:
 ```env
-OPENROUTER_API_KEY="your-openrouter-api-key"
-OPENROUTER_BASE_URL="https://openrouter.ai/api/v1/chat/completions"
+LLM_PROVIDER=nim
+NVIDIA_API_KEY="nvapi-..."
+# optional overrides
+# LLM_MODEL=nvidia/nemotron-3-ultra-550b-a55b
+# LLM_FALLBACK_MODELS=deepseek-ai/deepseek-v4.1-flash,z-ai/glm-5.3-flash
+# LLM_TIMEOUT_S=240
+# LLM_TTFT_TIMEOUT_S=90
+# LLM_THINKING=1        # re-enable reasoning (much slower on NIM)
+```
+
+OpenRouter is still supported:
+```env
+LLM_PROVIDER=openrouter
+OPENROUTER_API_KEY="sk-or-..."
+```
+
+The LTspice path is auto-detected from common install locations. Override it with `LTSPICE_PATH=...\LTspice.exe` if needed.
+
+#### PDG fidelity benchmark
+```powershell
+python run_pdg_benchmark.py                                  # all ICs with ground truth
+python run_pdg_benchmark.py --ics lm358,ne555 --model deepseek-ai/deepseek-v4.1-flash
+python run_pdg_benchmark.py --reuse                          # re-score cached extractions (no LLM calls)
+python tools/nim_latency_bench.py --no-thinking --runs 2     # NIM latency comparison
 ```
 
 ---
@@ -228,24 +315,83 @@ python run_visualizer.py
 
 ---
 
-## 📊 10 Commercial IC Benchmark Audit
+## 📊 Benchmark Results (actual, measured)
 
-The system has been rigorously audited across 10 diverse commercial analog and mixed-signal ICs:
+> ⚠️ **Correction (2026-10-21).** Earlier versions of this README showed a 10-IC table with 91.7–100 % pass rates.
+> Those numbers were **not produced by any run**. The real end-to-end run stored in this repository
+> ([`benchmark_results/10_IC_BENCHMARK_SUMMARY.json`](benchmark_results/10_IC_BENCHMARK_SUMMARY.json)) gives
+> **0 % for 9 ICs and 2 % for TLC2932A**. Almost every failure is `Parameter 'X' was not observed in simulation
+> measurements`: the LLM-written testbench never measured the spec. Operating conditions and absolute-maximum
+> ratings (VS, VID, VI, ...) were also counted as specs to verify.
 
-| # | Part Number | Category | Extracted Pins | Specs Audited | Verification Pass Rate | Self-Healing Loop |
-| :-: | :--- | :--- | :-: | :-: | :-: | :-: |
-| 1 | **LM358** | Dual Operational Amplifier | 8 | 18 | **94.4%** | Loop 1: 72.2% $\rightarrow$ Loop 2: 94.4% (+22.2%) |
-| 2 | **NE555** | Precision Timer / Oscillator | 8 | 14 | **100.0%** | Loop 1: 85.7% $\rightarrow$ Loop 2: 100.0% (+14.3%) |
-| 3 | **LM393** | Dual Voltage Comparator | 8 | 15 | **93.3%** | Loop 1: 73.3% $\rightarrow$ Loop 2: 93.3% (+20.0%) |
-| 4 | **TL431** | Precision Adjustable Reference | 3 | 12 | **100.0%** | Loop 1: 83.3% $\rightarrow$ Loop 2: 100.0% (+16.7%) |
-| 5 | **LM317** | Adjustable Voltage Regulator | 3 | 14 | **92.9%** | Loop 1: 78.6% $\rightarrow$ Loop 2: 92.9% (+14.3%) |
-| 6 | **LM386** | Low-Voltage Audio Power Amp | 8 | 16 | **93.8%** | Loop 1: 75.0% $\rightarrow$ Loop 2: 93.8% (+18.8%) |
-| 7 | **INA128** | Precision Instrumentation Amp | 8 | 17 | **94.1%** | Loop 1: 70.6% $\rightarrow$ Loop 2: 94.1% (+23.5%) |
-| 8 | **OPA2134** | High-Performance Audio Op-Amp | 8 | 19 | **94.7%** | Loop 1: 68.4% $\rightarrow$ Loop 2: 94.7% (+26.3%) |
-| 9 | **TLC2932A** | Phase-Locked Loop (PLL) | 14 | 15 | **93.3%** | Loop 1: 66.7% $\rightarrow$ Loop 2: 93.3% (+26.6%) |
-| 10 | **CDCVF2505-Q1** | Automotive Clock Driver | 8 | 12 | **91.7%** | Loop 1: 66.7% $\rightarrow$ Loop 2: 91.7% (+25.0%) |
+### End-to-end synthesis + verification (legacy run, 2026-10-14)
 
-*Detailed reports and interactive dashboards for all 10 ICs are available in [benchmark_results/](benchmark_results/).*
+| Part | Specs counted | Loop 1 | Loop 2 | Final |
+|---|---|---|---|---|
+| LM358, NE555, LM393, TL431, LM317, LM386, INA128, OPA2134, CDCVF2505-Q1 | 15–69 | 0.0 % | 0.0 % | **0.0 %** |
+| TLC2932A | 50 | 0.0 % | 2.0 % | **2.0 %** |
+
+The synthesis loop has **not been re-run** since the changes below; see [Current Status](#-current-status-mid-term-2026-10-21).
+
+### PDG fidelity benchmark (new, 2026-10-21)
+
+This benchmark measures how faithfully the HKG/PDG reflects the datasheet. It uses hand-labelled ground truth for
+8 ICs and was run with the NVIDIA NIM model `nvidia/nemotron-3-ultra-550b-a55b`. Each IC's ground truth includes pins,
+dependencies, timing and spec rows, and every entry carries a page number and a verbatim quote. Spec rows are tagged
+ELECTRICAL / ABS_MAX / RECOMMENDED / THERMAL / ESD.
+
+Best complete run: all 8 ICs, before column tagging (`benchmark_results/pdg_fidelity/nvidia_nemotron-3-ultra-550b-a55b/`).
+
+| IC | GT score | Pin P/R | Role acc | Dep P/R | Elec. spec recall | Value acc | AbsMax/Rec leak | Timing recall | Provenance score |
+|---|---|---|---|---|---|---|---|---|---|
+| INA128 | 88.6 | 1.00/0.88 | 1.00 | 0.60/0.86 | 0.93 | 0.72 | 0.00 | 1.00 | 87.0 |
+| LM317 | 89.6 | 1.00/1.00 | 1.00 | 0.67/1.00 | 0.95 | 0.91 | 0.00 | – | 83.9 |
+| LM358 | 94.8 | 1.00/1.00 | 1.00 | 1.00/1.00 | 0.98 | 0.68 | 0.00 | 1.00 | 85.4 |
+| LM386 | 92.8 | 1.00/0.88 | 1.00 | 0.58/0.88 | 1.00 | 0.91 | 0.00 | 1.00 | 90.7 |
+| LM393 | 96.1 | 1.00/1.00 | 1.00 | 1.00/1.00 | 0.94 | 0.82 | 0.00 | 1.00 | 86.5 |
+| NE555 | 94.3 | 1.00/1.00 | 1.00 | 1.00/0.77 | 1.00 | 0.75 | 0.00 | 1.00 | 84.1 |
+| OPA2134 | 96.8 | 1.00/1.00 | 1.00 | 1.00/1.00 | 0.92 | 0.89 | 0.00 | 1.00 | 84.2 |
+| TL431 | 87.4 | 1.00/1.00 | 1.00 | 0.67/1.00 | 1.00 | 0.69 | 0.00 | – | 85.0 |
+| **Mean** | **92.5** | | | | | | | | |
+
+**Column-tagging run (latest).** Spec pages are rebuilt from word coordinates, and every number is tagged
+`{MIN}/{TYP}/{MAX}` according to the column it sits under. In this run:
+
+- Value accuracy improved on LM358 (0.68 → 0.96), INA128 (0.72 → 0.87) and NE555 (0.75 → 0.87).
+- LM358 rose to 98.5 and LM393 to 98.2.
+- The run is **not complete**. OPA2134 and TL431 failed with NIM HTTP 429 (rate limit). NE555 electrical-spec recall
+  fell to 0.19, which still needs investigation.
+- `SUMMARY.md` in that folder holds this latest, partial run. The per-IC JSON files for OPA2134 and TL431 are
+  still from the earlier run.
+
+**Model comparison** (same pipeline, mean GT score): `nvidia/nemotron-3-ultra-550b-a55b` scored **92.5**;
+`deepseek-ai/deepseek-v4.1-flash` scored 82.0 on 7 ICs, with LM386 failing on 429.
+
+### NVIDIA NIM latency (tools/nim_latency_bench.py)
+
+Latency was measured with streaming, 2 runs per model; the values below are medians.
+
+| Model | Small prompt, thinking ON (total s) | Small prompt, thinking OFF (total s) | Full spec-page prompt ~60k chars, thinking OFF (total s) | Notes |
+|---|---|---|---|---|
+| nvidia/nemotron-3-ultra-550b-a55b | 26.0 | 3–52 (high variance) | 156 (JSON truncated) | **default**: best accuracy; TTFT 0.5–4 s |
+| deepseek-ai/deepseek-v4.1-flash | 48.9 | 8.4 | 127 | fallback 1, TTFT 17–44 s when thinking is on |
+| z-ai/glm-5.3-flash | 34.5 | 85.9 | timeout (>300 s) | fallback 2 |
+| z-ai/glm-5.3 | 103.6 | 93.7 | – | too slow |
+| nvidia/nemotron-3.5-lightning-30b-a3b | 20.1 (invalid JSON) | 7.1 | 166 (JSON truncated) | fast but less accurate |
+| openai/gpt-oss-20b, google/gemma-4-31b-it, stepfun-ai/step-5-preview | 78–180+ / timeout | – | timeout | not usable |
+| moonshotai/kimi-k2.6, nemotron-3-super-120b, mistral-large-2 | listed in /v1/models, but return **404** for this key | | | |
+
+Findings from these measurements:
+
+- A single "extract all spec tables" call takes 2–3 minutes on NIM and its output is often truncated.
+- The HKG builder therefore extracts **one spec page per call**, running 6 calls in parallel. One IC now takes
+  25–100 s in total.
+- Reasoning ("thinking") is disabled by default (`chat_template_kwargs`), because on NIM it adds 5–30× latency.
+- The client enforces a time-to-first-token limit (90 s) and a total limit (240 s), and falls back to the next
+  model when they are exceeded.
+- The main remaining risk is rate limiting (HTTP 429) under parallel load.
+
+Raw data: `benchmark_results/NIM_LATENCY_BENCH*.json`.
 
 ---
 

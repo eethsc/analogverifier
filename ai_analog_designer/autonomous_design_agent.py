@@ -29,7 +29,7 @@ class AutonomousAnalogDesignAgent:
     def __init__(
         self,
         api_key: Optional[str] = None,
-        model: str = "google/gemini-2.5-flash",
+        model: Optional[str] = None,
         output_dir: str = "output_design",
         simulator_path: Optional[str] = None,
         max_iterations: int = 10

@@ -3,11 +3,19 @@ import subprocess
 import glob
 import re
 
-LTSPICE_EXE = r"D:\Program Files\LTspice\LTspice.exe"
+_CANDIDATES = [
+    os.environ.get("LTSPICE_PATH", ""),
+    r"D:\Program Files\LTspice\LTspice.exe",
+    r"C:\Program Files\LTspice\LTspice.exe",
+    r"C:\Program Files\ADI\LTspice\LTspice.exe",
+    os.path.expandvars(r"%LOCALAPPDATA%\Programs\ADI\LTspice\LTspice.exe"),
+    r"C:\Program Files\LTC\LTspiceXVII\XVIIx64.exe",
+]
+LTSPICE_EXE = next((p for p in _CANDIDATES if p and os.path.exists(p)), _CANDIDATES[1])
 
 class LTspiceRunner:
-    def __init__(self, simulator_path=LTSPICE_EXE):
-        self.simulator_path = simulator_path
+    def __init__(self, simulator_path=None):
+        self.simulator_path = simulator_path or LTSPICE_EXE
         if not os.path.exists(self.simulator_path):
             raise FileNotFoundError(f"LTspice not found at {self.simulator_path}")
 
