@@ -1,147 +1,141 @@
 {
   "ic": "lm358",
   "model": "nvidia/nemotron-3-ultra-550b-a55b",
-  "llm_seconds": 103.1,
+  "llm_seconds": 200.1,
   "llm_calls": [
     {
-      "ts": 1792565440.6808038,
-      "tag": "hkg_specs_p9",
-      "provider": "nim",
-      "model": "nvidia/nemotron-3-ultra-550b-a55b",
-      "attempt": 1,
-      "status": "ok",
-      "ttft_s": 3.05,
-      "total_s": 3.05,
-      "completion_tokens": 220,
-      "prompt_tokens": null,
-      "finish_reason": "stop"
-    },
-    {
-      "ts": 1792565441.3918676,
-      "tag": "hkg_specs_p7",
-      "provider": "nim",
-      "model": "nvidia/nemotron-3-ultra-550b-a55b",
-      "attempt": 1,
-      "status": "ok",
-      "ttft_s": 3.82,
-      "total_s": 3.82,
-      "completion_tokens": 230,
-      "prompt_tokens": null,
-      "finish_reason": "stop"
-    },
-    {
-      "ts": 1792565450.6341727,
+      "ts": 1792585698.9351337,
       "tag": "hkg_pins",
       "provider": "nim",
       "model": "nvidia/nemotron-3-ultra-550b-a55b",
       "attempt": 1,
       "status": "ok",
-      "ttft_s": 13.12,
-      "total_s": 13.14,
-      "completion_tokens": 1080,
+      "ttft_s": 19.21,
+      "total_s": 19.21,
+      "completion_tokens": 1054,
       "prompt_tokens": null,
       "finish_reason": "stop"
     },
     {
-      "ts": 1792565466.812742,
+      "ts": 1792585706.1159763,
       "tag": "hkg_specs_p4",
       "provider": "nim",
       "model": "nvidia/nemotron-3-ultra-550b-a55b",
       "attempt": 1,
       "status": "ok",
-      "ttft_s": 29.32,
-      "total_s": 29.32,
-      "completion_tokens": 1767,
+      "ttft_s": 25.89,
+      "total_s": 25.89,
+      "completion_tokens": 1509,
       "prompt_tokens": null,
       "finish_reason": "stop"
     },
     {
-      "ts": 1792565473.935549,
+      "ts": 1792585716.9578433,
+      "tag": "hkg_specs_p7",
+      "provider": "nim",
+      "model": "nvidia/nemotron-3-ultra-550b-a55b",
+      "attempt": 1,
+      "status": "ok",
+      "ttft_s": 5.16,
+      "total_s": 5.16,
+      "completion_tokens": 230,
+      "prompt_tokens": null,
+      "finish_reason": "stop"
+    },
+    {
+      "ts": 1792585752.4257436,
+      "tag": "hkg_specs_p9",
+      "provider": "nim",
+      "model": "nvidia/nemotron-3-ultra-550b-a55b",
+      "attempt": 1,
+      "status": "ok",
+      "ttft_s": 6.62,
+      "total_s": 6.62,
+      "completion_tokens": 220,
+      "prompt_tokens": null,
+      "finish_reason": "stop"
+    },
+    {
+      "ts": 1792585763.049467,
       "tag": "hkg_specs_p13",
       "provider": "nim",
       "model": "nvidia/nemotron-3-ultra-550b-a55b",
       "attempt": 1,
       "status": "ok",
-      "ttft_s": 7.12,
-      "total_s": 7.12,
-      "completion_tokens": 161,
+      "ttft_s": 10.62,
+      "total_s": 10.62,
+      "completion_tokens": 158,
       "prompt_tokens": null,
       "finish_reason": "stop"
     },
     {
-      "ts": 1792565494.7010827,
-      "tag": "hkg_specs_p8",
-      "provider": "nim",
-      "model": "nvidia/nemotron-3-ultra-550b-a55b",
-      "attempt": 1,
-      "status": "ok",
-      "ttft_s": 57.09,
-      "total_s": 57.1,
-      "completion_tokens": 3212,
-      "prompt_tokens": null,
-      "finish_reason": "length"
-    },
-    {
-      "ts": 1792565494.8114836,
+      "ts": 1792585780.0329368,
       "tag": "hkg_specs_p11",
       "provider": "nim",
       "model": "nvidia/nemotron-3-ultra-550b-a55b",
       "attempt": 1,
       "status": "ok",
-      "ttft_s": 53.38,
-      "total_s": 53.42,
-      "completion_tokens": 2875,
+      "ttft_s": 73.91,
+      "total_s": 73.92,
+      "completion_tokens": 2916,
       "prompt_tokens": null,
       "finish_reason": "stop"
     },
     {
-      "ts": 1792565496.2298014,
-      "tag": "hkg_specs_p6",
-      "provider": "nim",
-      "model": "nvidia/nemotron-3-ultra-550b-a55b",
-      "attempt": 1,
-      "status": "ok",
-      "ttft_s": 58.66,
-      "total_s": 58.66,
-      "completion_tokens": 3134,
-      "prompt_tokens": null,
-      "finish_reason": "stop"
-    },
-    {
-      "ts": 1792565501.951519,
+      "ts": 1792585789.3418763,
       "tag": "hkg_specs_p10",
       "provider": "nim",
       "model": "nvidia/nemotron-3-ultra-550b-a55b",
       "attempt": 1,
-      "status": "ok",
-      "ttft_s": 61.2,
-      "total_s": 61.27,
-      "completion_tokens": 2986,
-      "prompt_tokens": null,
-      "finish_reason": "stop"
-    },
-    {
-      "ts": 1792565528.043155,
-      "tag": "hkg_specs_p5",
-      "provider": "nim",
-      "model": "nvidia/nemotron-3-ultra-550b-a55b",
-      "attempt": 1,
       "status": "timeout",
-      "total_s": 90.52,
+      "total_s": 90.41,
       "error": "TimeoutError: The read operation timed out"
     },
     {
-      "ts": 1792565540.617361,
+      "ts": 1792585795.0914817,
       "tag": "hkg_specs_p12",
       "provider": "nim",
       "model": "nvidia/nemotron-3-ultra-550b-a55b",
       "attempt": 1,
       "status": "ok",
-      "ttft_s": 89.96,
-      "total_s": 89.97,
-      "completion_tokens": 3303,
+      "ttft_s": 78.13,
+      "total_s": 78.13,
+      "completion_tokens": 3822,
+      "prompt_tokens": null,
+      "finish_reason": "length"
+    },
+    {
+      "ts": 1792585832.530286,
+      "tag": "hkg_specs_p6",
+      "provider": "nim",
+      "model": "nvidia/nemotron-3-ultra-550b-a55b",
+      "attempt": 1,
+      "status": "ok",
+      "ttft_s": 69.48,
+      "total_s": 69.48,
+      "completion_tokens": 3135,
       "prompt_tokens": null,
       "finish_reason": "stop"
+    },
+    {
+      "ts": 1792585870.5431323,
+      "tag": "hkg_specs_p8",
+      "provider": "nim",
+      "model": "nvidia/nemotron-3-ultra-550b-a55b",
+      "attempt": 1,
+      "status": "timeout",
+      "total_s": 190.77,
+      "error": "TimeoutError: The read operation timed out"
+    },
+    {
+      "ts": 1792585879.7923367,
+      "tag": "hkg_specs_p5",
+      "provider": "nim",
+      "model": "nvidia/nemotron-3-ultra-550b-a55b",
+      "attempt": 1,
+      "status": "timeout",
+      "total_s": 200.03,
+      "error": "TimeoutError: The read operation timed out"
     }
   ],
   "groundtruth_comparison": {
@@ -183,11 +177,11 @@
       "violations": []
     },
     "spec_rows": {
-      "precision": 0.244,
+      "precision": 0.377,
       "recall": 0.887,
-      "f1": 0.383,
+      "f1": 0.529,
       "tp": 55,
-      "pred": 225,
+      "pred": 146,
       "gt": 62
     },
     "electrical_spec_recall": 1.0,
@@ -245,7 +239,7 @@
   },
   "provenance_audit": {
     "mode": "groundtruth_free_provenance",
-    "fidelity_score_pct": 86.4,
+    "fidelity_score_pct": 86.1,
     "status": "TRUSTWORTHY",
     "pin_provenance": {
       "pins": 8,
@@ -254,51 +248,19 @@
       "ungrounded": []
     },
     "spec_provenance": {
-      "specs": 225,
-      "grounded": 215,
-      "grounded_pct": 95.6,
+      "specs": 146,
+      "grounded": 138,
+      "grounded_pct": 94.5,
       "by_category": {
         "ABS_MAX": 16,
         "ESD": 4,
-        "ELECTRICAL": 205
+        "ELECTRICAL": 126
       },
       "ungrounded_examples": [
         {
           "symbol": "tSC",
           "category": "ABS_MAX",
           "page": 4,
-          "numbers_on_page": false,
-          "evidence_overlap": 1.0,
-          "grounded": false
-        },
-        {
-          "symbol": "VCM",
-          "category": "ELECTRICAL",
-          "page": 10,
-          "numbers_on_page": false,
-          "evidence_overlap": 1.0,
-          "grounded": false
-        },
-        {
-          "symbol": "VCM",
-          "category": "ELECTRICAL",
-          "page": 10,
-          "numbers_on_page": false,
-          "evidence_overlap": 1.0,
-          "grounded": false
-        },
-        {
-          "symbol": "VCM",
-          "category": "ELECTRICAL",
-          "page": 10,
-          "numbers_on_page": false,
-          "evidence_overlap": 1.0,
-          "grounded": false
-        },
-        {
-          "symbol": "VCM",
-          "category": "ELECTRICAL",
-          "page": 10,
           "numbers_on_page": false,
           "evidence_overlap": 1.0,
           "grounded": false
@@ -323,6 +285,22 @@
           "symbol": "IQ",
           "category": "ELECTRICAL",
           "page": 11,
+          "numbers_on_page": false,
+          "evidence_overlap": 1.0,
+          "grounded": false
+        },
+        {
+          "symbol": "VCM",
+          "category": "ELECTRICAL",
+          "page": 12,
+          "numbers_on_page": false,
+          "evidence_overlap": 1.0,
+          "grounded": false
+        },
+        {
+          "symbol": "VCM",
+          "category": "ELECTRICAL",
+          "page": 12,
           "numbers_on_page": false,
           "evidence_overlap": 1.0,
           "grounded": false
@@ -379,7 +357,7 @@
         "type": "SIGNAL_PATH",
         "origin": "datasheet",
         "delay_source": "ts",
-        "condition": "Common-mode input range from V- to V+ - 1.5V"
+        "condition": "Common-mode range V- to V+ - 1.5V"
       },
       {
         "from": "IN1_P",
@@ -388,7 +366,7 @@
         "type": "SIGNAL_PATH",
         "origin": "datasheet",
         "delay_source": "ts",
-        "condition": "Common-mode input range from V- to V+ - 1.5V"
+        "condition": "Common-mode range V- to V+ - 1.5V"
       },
       {
         "from": "V_N",
@@ -397,7 +375,7 @@
         "type": "POWER_FEED",
         "origin": "datasheet",
         "delay_source": "ts",
-        "condition": "Negative supply or ground reference"
+        "condition": "Ground or negative supply"
       },
       {
         "from": "V_N",
@@ -406,7 +384,7 @@
         "type": "POWER_FEED",
         "origin": "datasheet",
         "delay_source": "ts",
-        "condition": "Negative supply or ground reference"
+        "condition": "Ground or negative supply"
       },
       {
         "from": "V_N",
@@ -451,7 +429,7 @@
         "type": "SIGNAL_PATH",
         "origin": "datasheet",
         "delay_source": "ts",
-        "condition": "Common-mode input range from V- to V+ - 1.5V"
+        "condition": "Common-mode range V- to V+ - 1.5V"
       },
       {
         "from": "IN2_N",
@@ -460,7 +438,7 @@
         "type": "SIGNAL_PATH",
         "origin": "datasheet",
         "delay_source": "ts",
-        "condition": "Common-mode input range from V- to V+ - 1.5V"
+        "condition": "Common-mode range V- to V+ - 1.5V"
       },
       {
         "from": "V_P",

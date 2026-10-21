@@ -1,116 +1,113 @@
 {
   "ic": "lm393",
   "model": "nvidia/nemotron-3-ultra-550b-a55b",
-  "llm_seconds": 81.4,
+  "llm_seconds": 181.9,
   "llm_calls": [
     {
-      "ts": 1792565534.2675066,
+      "ts": 1792585941.9063275,
       "tag": "hkg_pins",
       "provider": "nim",
       "model": "nvidia/nemotron-3-ultra-550b-a55b",
       "attempt": 1,
       "status": "ok",
-      "ttft_s": 10.5,
-      "total_s": 10.5,
-      "completion_tokens": 1130,
+      "ttft_s": 10.48,
+      "total_s": 10.48,
+      "completion_tokens": 1162,
       "prompt_tokens": null,
       "finish_reason": "stop"
     },
     {
-      "ts": 1792565549.2665348,
-      "tag": "hkg_specs_p9",
-      "provider": "nim",
-      "model": "nvidia/nemotron-3-ultra-550b-a55b",
-      "attempt": 1,
-      "status": "ok",
-      "ttft_s": 25.33,
-      "total_s": 25.33,
-      "completion_tokens": 1401,
-      "prompt_tokens": null,
-      "finish_reason": "stop"
-    },
-    {
-      "ts": 1792565555.2520843,
-      "tag": "hkg_specs_p4",
-      "provider": "nim",
-      "model": "nvidia/nemotron-3-ultra-550b-a55b",
-      "attempt": 1,
-      "status": "ok",
-      "ttft_s": 31.48,
-      "total_s": 31.48,
-      "completion_tokens": 1612,
-      "prompt_tokens": null,
-      "finish_reason": "stop"
-    },
-    {
-      "ts": 1792565555.7095485,
-      "tag": "hkg_specs_p7",
-      "provider": "nim",
-      "model": "nvidia/nemotron-3-ultra-550b-a55b",
-      "attempt": 1,
-      "status": "ok",
-      "ttft_s": 31.83,
-      "total_s": 31.83,
-      "completion_tokens": 1729,
-      "prompt_tokens": null,
-      "finish_reason": "stop"
-    },
-    {
-      "ts": 1792565561.4860878,
-      "tag": "hkg_specs_p6",
-      "provider": "nim",
-      "model": "nvidia/nemotron-3-ultra-550b-a55b",
-      "attempt": 1,
-      "status": "ok",
-      "ttft_s": 37.66,
-      "total_s": 37.66,
-      "completion_tokens": 1361,
-      "prompt_tokens": null,
-      "finish_reason": "stop"
-    },
-    {
-      "ts": 1792565570.027744,
-      "tag": "hkg_specs_p8",
-      "provider": "nim",
-      "model": "nvidia/nemotron-3-ultra-550b-a55b",
-      "attempt": 1,
-      "status": "ok",
-      "ttft_s": 46.08,
-      "total_s": 46.15,
-      "completion_tokens": 2681,
-      "prompt_tokens": null,
-      "finish_reason": "stop"
-    },
-    {
-      "ts": 1792565571.7962897,
+      "ts": 1792586002.3506927,
       "tag": "hkg_specs_p10",
       "provider": "nim",
       "model": "nvidia/nemotron-3-ultra-550b-a55b",
       "attempt": 1,
       "status": "ok",
-      "ttft_s": 37.53,
-      "total_s": 37.53,
-      "completion_tokens": 2432,
+      "ttft_s": 60.34,
+      "total_s": 60.44,
+      "completion_tokens": 2793,
       "prompt_tokens": null,
       "finish_reason": "stop"
     },
     {
-      "ts": 1792565605.145774,
+      "ts": 1792586012.5928566,
       "tag": "hkg_specs_p5",
       "provider": "nim",
       "model": "nvidia/nemotron-3-ultra-550b-a55b",
       "attempt": 1,
       "status": "ok",
-      "ttft_s": 81.33,
-      "total_s": 81.34,
+      "ttft_s": 55.15,
+      "total_s": 55.22,
       "completion_tokens": 2468,
       "prompt_tokens": null,
       "finish_reason": "stop"
+    },
+    {
+      "ts": 1792586048.4725506,
+      "tag": "hkg_specs_p6",
+      "provider": "nim",
+      "model": "nvidia/nemotron-3-ultra-550b-a55b",
+      "attempt": 1,
+      "status": "ok",
+      "ttft_s": 62.56,
+      "total_s": 62.56,
+      "completion_tokens": 1744,
+      "prompt_tokens": null,
+      "finish_reason": "stop"
+    },
+    {
+      "ts": 1792586048.5709198,
+      "tag": "hkg_specs_p9",
+      "provider": "nim",
+      "model": "nvidia/nemotron-3-ultra-550b-a55b",
+      "attempt": 1,
+      "status": "ok",
+      "ttft_s": 35.98,
+      "total_s": 35.98,
+      "completion_tokens": 1400,
+      "prompt_tokens": null,
+      "finish_reason": "stop"
+    },
+    {
+      "ts": 1792586065.9444528,
+      "tag": "hkg_specs_p7",
+      "provider": "nim",
+      "model": "nvidia/nemotron-3-ultra-550b-a55b",
+      "attempt": 1,
+      "status": "ok",
+      "ttft_s": 69.12,
+      "total_s": 69.12,
+      "completion_tokens": 1634,
+      "prompt_tokens": null,
+      "finish_reason": "stop"
+    },
+    {
+      "ts": 1792586088.03794,
+      "tag": "hkg_specs_p4",
+      "provider": "nim",
+      "model": "nvidia/nemotron-3-ultra-550b-a55b",
+      "attempt": 1,
+      "status": "ok",
+      "ttft_s": 39.56,
+      "total_s": 39.56,
+      "completion_tokens": 1641,
+      "prompt_tokens": null,
+      "finish_reason": "stop"
+    },
+    {
+      "ts": 1792586092.977837,
+      "tag": "hkg_specs_p8",
+      "provider": "nim",
+      "model": "nvidia/nemotron-3-ultra-550b-a55b",
+      "attempt": 1,
+      "status": "timeout",
+      "total_s": 181.82,
+      "error": "TimeoutError: The read operation timed out"
     }
   ],
   "groundtruth_comparison": {
     "ic": "LM393",
-    "score": 98.2,
+    "score": 97.1,
     "pins": {
       "precision": 1.0,
       "recall": 1.0,
@@ -147,19 +144,19 @@
       "violations": []
     },
     "spec_rows": {
-      "precision": 0.222,
-      "recall": 1.0,
-      "f1": 0.364,
-      "tp": 38,
-      "pred": 171,
+      "precision": 0.253,
+      "recall": 0.974,
+      "f1": 0.402,
+      "tp": 37,
+      "pred": 146,
       "gt": 38
     },
-    "electrical_spec_recall": 1.0,
-    "spec_value_accuracy": 0.88,
+    "electrical_spec_recall": 0.944,
+    "spec_value_accuracy": 0.878,
     "spec_category_accuracy": 1.0,
     "category_confusion": {
       "ELECTRICAL": {
-        "ELECTRICAL": 18
+        "ELECTRICAL": 17
       },
       "ABS_MAX": {
         "ABS_MAX": 9
@@ -201,7 +198,7 @@
   },
   "provenance_audit": {
     "mode": "groundtruth_free_provenance",
-    "fidelity_score_pct": 86.2,
+    "fidelity_score_pct": 86.0,
     "status": "TRUSTWORTHY",
     "pin_provenance": {
       "pins": 8,
@@ -210,15 +207,15 @@
       "ungrounded": []
     },
     "spec_provenance": {
-      "specs": 171,
-      "grounded": 162,
-      "grounded_pct": 94.7,
+      "specs": 146,
+      "grounded": 137,
+      "grounded_pct": 93.8,
       "by_category": {
         "ABS_MAX": 14,
         "RECOMMENDED": 10,
         "THERMAL": 31,
         "ESD": 2,
-        "ELECTRICAL": 114
+        "ELECTRICAL": 89
       },
       "ungrounded_examples": [
         {
@@ -282,7 +279,7 @@
           "category": "ELECTRICAL",
           "page": 10,
           "numbers_on_page": false,
-          "evidence_overlap": 0.89,
+          "evidence_overlap": 1.0,
           "grounded": false
         },
         {
@@ -290,7 +287,7 @@
           "category": "ELECTRICAL",
           "page": 10,
           "numbers_on_page": false,
-          "evidence_overlap": 0.89,
+          "evidence_overlap": 1.0,
           "grounded": false
         }
       ]
@@ -327,7 +324,7 @@
         "type": "SIGNAL_PATH",
         "origin": "datasheet",
         "delay_source": "datasheet_edge",
-        "condition": "Response time 1\u00b5s typical"
+        "condition": "Response time 1\u00b5s typical; output low when 1IN- > 1IN+ + offset"
       },
       {
         "from": "1IN_P",
@@ -336,7 +333,7 @@
         "type": "SIGNAL_PATH",
         "origin": "datasheet",
         "delay_source": "datasheet_edge",
-        "condition": "Response time 1\u00b5s typical"
+        "condition": "Response time 1\u00b5s typical; output low when 1IN- > 1IN+ + offset"
       },
       {
         "from": "GND",
@@ -399,7 +396,7 @@
         "type": "SIGNAL_PATH",
         "origin": "datasheet",
         "delay_source": "datasheet_edge",
-        "condition": "Response time 1\u00b5s typical"
+        "condition": "Response time 1\u00b5s typical; output low when 2IN- > 2IN+ + offset"
       },
       {
         "from": "2IN_N",
@@ -408,7 +405,7 @@
         "type": "SIGNAL_PATH",
         "origin": "datasheet",
         "delay_source": "datasheet_edge",
-        "condition": "Response time 1\u00b5s typical"
+        "condition": "Response time 1\u00b5s typical; output low when 2IN- > 2IN+ + offset"
       },
       {
         "from": "VCC",

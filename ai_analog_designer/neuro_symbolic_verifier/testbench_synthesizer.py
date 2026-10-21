@@ -171,7 +171,7 @@ XDUT {pin_names_str} {subckt_name}
         system_prompt = "You are an autonomous SPICE testbench generator specializing in LTspice batch verification and neuro-symbolic measurement extraction."
         
         try:
-            raw_resp = self.llm.complete(prompt, system_prompt=system_prompt, temperature=0.1, max_tokens=8192)
+            raw_resp = self.llm.complete(prompt, system_prompt=system_prompt, temperature=0.1, max_tokens=8192, tag="tb")
             deck = ""
             m_deck = re.search(r'<spice_deck>(.*?)</spice_deck>', raw_resp, re.DOTALL | re.IGNORECASE)
             if m_deck:

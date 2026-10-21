@@ -42,6 +42,11 @@ _load_env()
 def model_extra_body(provider: str, model: str) -> Dict[str, Any]:
     """Per-model request knobs. Reasoning ("thinking") is disabled by default for extraction/synthesis:
     on NIM it multiplies latency 5-30x (see benchmark_results/NIM_LATENCY_BENCH.md). Set LLM_THINKING=1 to enable."""
+    if provider == "openrouter":
+        body: Dict[str, Any] = {"usage": {"include": True}}       # returns exact USD cost per call
+        if os.environ.get("LLM_THINKING") != "1":
+            body["reasoning"] = {"effort": "low", "exclude": True}
+        return body
     if provider != "nim" or os.environ.get("LLM_THINKING") == "1":
         return {}
     m = model.lower()
@@ -65,8 +70,9 @@ PROVIDERS = {
     "openrouter": {
         "base_url": lambda: os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1/chat/completions"),
         "key_env": "OPENROUTER_API_KEY",
-        "default_model": lambda: os.environ.get("LLM_MODEL", "google/gemini-2.5-flash"),
-        "fallback_models": lambda: [m for m in os.environ.get("LLM_FALLBACK_MODELS", "").split(",") if m],
+        "default_model": lambda: os.environ.get("LLM_MODEL", "anthropic/claude-haiku-5.5"),
+        "fallback_models": lambda: [m for m in os.environ.get(
+            "LLM_FALLBACK_MODELS", "openai/gpt-6-luna,deepseek/deepseek-v4.1-flash").split(",") if m],
         "supports_json_mode": True,
     },
 }
@@ -112,6 +118,38 @@ class LLMTimeout(Exception):
     pass
 
 
+class LLMBudgetExceeded(Exception):
+    pass
+
+
+# Per-task model routing: tag prefix -> env var holding the model id (falls back to LLM_MODEL / provider default)
+TASK_MODEL_ENV = [("hkg", "LLM_EXTRACT_MODEL"), ("synth", "LLM_SYNTH_MODEL"), ("tb", "LLM_TB_MODEL")]
+
+_COST_LOCK = threading.Lock()
+_SPENT_USD = [0.0]
+
+
+def spent_usd() -> float:
+    return _SPENT_USD[0]
+
+
+# Process-wide cap on in-flight requests (NIM returns HTTP 429 above ~4-6 parallel calls per key).
+_GLOBAL_SEM = threading.BoundedSemaphore(int(os.environ.get("LLM_MAX_CONCURRENCY", "4")))
+_RATE_LOCK = threading.Lock()
+_NEXT_SLOT = [0.0]
+
+
+def _acquire_slot(min_interval_s: float):
+    """Blocks until a concurrency slot is free and the minimum spacing between request starts has elapsed."""
+    _GLOBAL_SEM.acquire()
+    with _RATE_LOCK:
+        now = time.monotonic()
+        wait = _NEXT_SLOT[0] - now
+        if wait > 0:
+            time.sleep(wait)
+        _NEXT_SLOT[0] = max(now, _NEXT_SLOT[0]) + min_interval_s
+
+
 class LLMClient:
     """OpenAI-compatible chat completion client with streaming timeouts and model fallback."""
 
@@ -134,6 +172,7 @@ class LLMClient:
         self.supports_json_mode = cfg["supports_json_mode"]
         self.request_timeout = float(request_timeout or os.environ.get("LLM_TIMEOUT_S", 240))
         self.first_token_timeout = float(first_token_timeout or os.environ.get("LLM_TTFT_TIMEOUT_S", 90))
+        self.min_interval_s = float(os.environ.get("LLM_MIN_INTERVAL_S", 0.5))
         self.call_log: List[Dict[str, Any]] = []
         self._lock = threading.Lock()
 
@@ -189,6 +228,7 @@ class LLMClient:
             "total_s": round(total, 2),
             "completion_tokens": (usage or {}).get("completion_tokens") or len(text) // 4,
             "prompt_tokens": (usage or {}).get("prompt_tokens"),
+            "cost_usd": (usage or {}).get("cost"),
             "finish_reason": finish_reason,
         }
 
@@ -208,6 +248,14 @@ class LLMClient:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
 
+        if model is None:
+            for prefix, env in TASK_MODEL_ENV:
+                if tag.startswith(prefix) and os.environ.get(env):
+                    model = os.environ[env]
+                    break
+        budget = float(os.environ.get("LLM_BUDGET_USD", "0") or 0)
+        if budget and _SPENT_USD[0] >= budget:
+            raise LLMBudgetExceeded(f"LLM budget exhausted: spent ${_SPENT_USD[0]:.3f} >= LLM_BUDGET_USD=${budget}")
         chain = [model or self.default_model] + [m for m in self.fallback_models if m != (model or self.default_model)]
         last_err = None
         for m in chain:
@@ -218,6 +266,7 @@ class LLMClient:
                 if response_format and self.supports_json_mode:
                     payload["response_format"] = response_format
                 t0 = time.perf_counter()
+                _acquire_slot(self.min_interval_s)
                 try:
                     res = self._stream_call(payload)
                     text = _strip_think(res["text"])
@@ -235,7 +284,9 @@ class LLMClient:
                         continue
                     if e.code in (401, 403, 404):
                         break  # model unavailable for this key -> next model
-                    time.sleep((6 if e.code == 429 else 2) * attempt)
+                    time.sleep((8 if e.code == 429 else 2) * attempt)
+                except LLMBudgetExceeded:
+                    raise
                 except Exception as e:
                     last_err = f"{type(e).__name__}: {e}"
                     self._log(tag, m, attempt, "timeout" if "timed out" in str(e).lower() or isinstance(e, LLMTimeout) else "error",
@@ -243,17 +294,24 @@ class LLMClient:
                     if isinstance(e, LLMTimeout) or "timed out" in str(e).lower():
                         break  # stalled model -> fall back immediately instead of retrying
                     time.sleep(2 * attempt)
+                finally:
+                    _GLOBAL_SEM.release()
         raise RuntimeError(f"LLM call failed on all models {chain}: {last_err}")
 
     def _log(self, tag, model, attempt, status, res, error=None):
         entry = {"ts": time.time(), "tag": tag, "provider": self.provider, "model": model, "attempt": attempt,
                  "status": status, **{k: v for k, v in res.items() if k != "text"}}
+        if entry.get("cost_usd"):
+            with _COST_LOCK:
+                _SPENT_USD[0] += float(entry["cost_usd"])
+            entry["spent_total_usd"] = round(_SPENT_USD[0], 4)
         if error:
             entry["error"] = error[:300]
         with self._lock:
             self.call_log.append(entry)
+        cost = f" cost=${entry['cost_usd']:.4f} spent=${entry['spent_total_usd']:.3f}" if entry.get("cost_usd") else ""
         print(f"[LLM] {tag or 'call'} model={model} status={status} ttft={entry.get('ttft_s')}s "
-              f"total={entry.get('total_s')}s tokens={entry.get('completion_tokens')}", flush=True)
+              f"total={entry.get('total_s')}s tokens={entry.get('completion_tokens')}{cost}", flush=True)
 
     def latency_summary(self) -> Dict[str, Any]:
         ok = [c for c in self.call_log if c["status"] == "ok"]
@@ -265,6 +323,7 @@ class LLMClient:
             "total_llm_seconds": round(sum(c.get("total_s", 0) for c in self.call_log), 1),
             "median_s": tot[len(tot) // 2] if tot else None,
             "max_s": tot[-1] if tot else None,
+            "cost_usd": round(sum(c.get("cost_usd") or 0 for c in self.call_log), 4),
             "by_tag": {t: round(sum(c["total_s"] for c in ok if c["tag"] == t), 1) for t in {c["tag"] for c in ok}},
         }
 

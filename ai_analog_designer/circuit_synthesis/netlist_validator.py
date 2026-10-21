@@ -21,6 +21,71 @@ class NetlistValidator:
     def __init__(self):
         pass
 
+    # ------------------------------------------------------------------ structural pre-pass
+    _ELEM = re.compile(r"^[RCLMQDJKVIEFGHBXSWTOUZ][A-Za-z0-9_\-\.]*\s+\S", re.I)
+
+    @classmethod
+    def normalize_structure(cls, code: str) -> str:
+        """Fixes the structural mistakes LLMs make most often, BEFORE line-level sanitising:
+          1. backslash line continuations ("... \\") -> SPICE '+' continuation
+          2. nested .subckt definitions -> hoisted to top level (outer subckt keeps its body)
+          3. free-text prose lines inside subckts -> commented out
+          4. markdown fences removed
+        """
+        code = re.sub(r"^\s*```[a-zA-Z]*\s*$", "", code, flags=re.M)
+        # 1. backslash continuations
+        lines, out = code.splitlines(), []
+        for ln in lines:
+            if out and out[-1].rstrip().endswith("\\"):
+                out[-1] = out[-1].rstrip()[:-1].rstrip() + " " + ln.strip()
+            else:
+                out.append(ln)
+        out = [l.rstrip()[:-1] if l.rstrip().endswith("\\") else l for l in out]
+
+        # 2. hoist nested subckts (stack-based)
+        top: List[str] = []
+        stack: List[List[str]] = []
+        finished: List[List[str]] = []
+        for ln in out:
+            s = ln.strip()
+            low = s.lower()
+            if low.startswith(".subckt"):
+                stack.append([ln])
+                continue
+            if low.startswith(".ends"):
+                if stack:
+                    body = stack.pop()
+                    body.append(ln)
+                    finished.append(body)
+                continue  # stray .ends without an open subckt is dropped
+            if stack:
+                stack[-1].append(ln)
+            else:
+                top.append(ln)
+        while stack:                       # unterminated subckts get an .ends
+            body = stack.pop()
+            body.append(".ends")
+            finished.append(body)
+        # inner subckts finish first -> they are emitted first, the wrapper (top-level DUT) last
+        blocks = []
+        for body in finished:
+            fixed = []
+            for ln in body:
+                s = ln.strip()
+                if not s or s.startswith(("*", ";", "+", ".")) or cls._ELEM.match(s):
+                    fixed.append(ln)
+                else:
+                    fixed.append("* " + s)         # 3. prose
+            blocks.append("\n".join(fixed))
+        top_fixed = []
+        for ln in top:
+            s = ln.strip()
+            if not s or s.startswith(("*", ";", ".model", ".param", ".func", ".lib", ".include", ".inc", "+")):
+                top_fixed.append(ln)
+            else:
+                top_fixed.append("* " + s)
+        return "\n".join(top_fixed) + "\n\n" + "\n\n".join(blocks) + "\n"
+
     def _join_multiline_braces(self, text: str) -> str:
         """Flattens multiline { ... } expressions into single lines for SPICE compliance."""
         lines = text.splitlines()
@@ -51,7 +116,9 @@ class NetlistValidator:
         idx = code.lower().find(".subckt")
         if idx != -1:
             prefix = code[:idx]
-            clean_prefix = "\n".join(["* " + l if l.strip() and not l.strip().startswith(("*", ";")) else l for l in prefix.splitlines()])
+            # keep top-level SPICE directives (.model/.param/...) — only free text is commented out
+            _keep = ("*", ";", "+", ".model", ".param", ".func", ".lib", ".include", ".inc", ".options", ".global")
+            clean_prefix = "\n".join(["* " + l if l.strip() and not l.strip().lower().startswith(_keep) else l for l in prefix.splitlines()])
             ends_idx = code.lower().rfind(".ends")
             if ends_idx != -1:
                 ends_line_end = code.find("\n", ends_idx)
@@ -340,17 +407,21 @@ class NetlistValidator:
         """
         errors = []
         warnings = []
-        cleaned_netlist = self.sanitize_spice_syntax(netlist.strip())
+        cleaned_netlist = self.sanitize_spice_syntax(self.normalize_structure(netlist.strip()))
 
-        # 1. Check .subckt header
-        subckt_match = re.search(r'^\s*\.subckt\s+([a-zA-Z0-9_]+)\s+(.+)$', cleaned_netlist, re.MULTILINE | re.IGNORECASE)
+        # 1. Check .subckt header (the DUT is the subckt named as expected, else the LAST one = top-level wrapper)
+        heads = re.findall(r'^\s*\.subckt\s+([a-zA-Z0-9_]+)\s+(.+)$', cleaned_netlist, re.MULTILINE | re.IGNORECASE)
+        subckt_match = None
+        if heads:
+            pick = next((h for h in heads if h[0].lower() == str(expected_subckt_name).lower()), heads[-1])
+            subckt_match = re.search(r'^\s*\.subckt\s+' + re.escape(pick[0]) + r'\s+(.+)$', cleaned_netlist, re.M | re.I)
         if not subckt_match:
             errors.append(f"Missing .subckt directive in netlist for expected subcircuit '{expected_subckt_name}'.")
             declared_name = expected_subckt_name
             declared_pins = []
         else:
-            declared_name = subckt_match.group(1)
-            declared_pins = subckt_match.group(2).split()
+            declared_name = pick[0]
+            declared_pins = subckt_match.group(1).split()
 
             # Verify pin presence
             expected_pin_names = [p["name"] for p in expected_pins]

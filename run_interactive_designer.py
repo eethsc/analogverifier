@@ -16,7 +16,7 @@ from ai_analog_designer.visualization import ProcessVisualizer
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("InteractiveDesigner")
 
-def run_cli_design(pdf_path=None, prompt=None, output_dir=None, iterations=10, open_dashboard=True):
+def run_cli_design(pdf_path=None, prompt=None, output_dir=None, iterations=10, open_dashboard=True, reuse_hkg=None):
     if not output_dir:
         timestamp = time.strftime("%Y%m%d_%H%M%S")
         output_dir = os.path.abspath(f"output_design/custom_run_{timestamp}")
@@ -35,7 +35,8 @@ def run_cli_design(pdf_path=None, prompt=None, output_dir=None, iterations=10, o
 
     agent = AutonomousAnalogDesignAgent(
         output_dir=output_dir,
-        max_iterations=iterations
+        max_iterations=iterations,
+        reuse_hkg_path=reuse_hkg
     )
 
     result = agent.run(
@@ -102,6 +103,7 @@ def main():
     parser.add_argument("--port", type=int, default=8080, help="Port for Web Studio (default: 8080).")
     parser.add_argument("--interactive", action="store_true", help="Launch interactive step-by-step CLI wizard.")
     parser.add_argument("--no-open", action="store_true", help="Do not automatically open browser.")
+    parser.add_argument("--reuse-hkg", help="Reuse a cached *_knowledge_graph.json (skips all Phase-1 LLM calls).")
 
     args = parser.parse_args()
 
@@ -129,7 +131,8 @@ def main():
         prompt=args.prompt,
         output_dir=args.output_dir,
         iterations=args.iterations,
-        open_dashboard=not args.no_open
+        open_dashboard=not args.no_open,
+        reuse_hkg=args.reuse_hkg
     )
 
 if __name__ == "__main__":

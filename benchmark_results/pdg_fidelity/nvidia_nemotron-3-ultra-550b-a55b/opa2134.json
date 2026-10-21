@@ -1,90 +1,90 @@
 {
   "ic": "opa2134",
   "model": "nvidia/nemotron-3-ultra-550b-a55b",
-  "llm_seconds": 65.7,
+  "llm_seconds": 159.8,
   "llm_calls": [
     {
-      "ts": 1792564951.3403695,
-      "tag": "hkg_specs_p22",
-      "provider": "nim",
-      "model": "nvidia/nemotron-3-ultra-550b-a55b",
-      "attempt": 1,
-      "status": "ok",
-      "ttft_s": 0.71,
-      "total_s": 0.72,
-      "completion_tokens": 7,
-      "prompt_tokens": null,
-      "finish_reason": "stop"
-    },
-    {
-      "ts": 1792564961.6312606,
+      "ts": 1792586069.64422,
       "tag": "hkg_pins",
       "provider": "nim",
       "model": "nvidia/nemotron-3-ultra-550b-a55b",
       "attempt": 1,
       "status": "ok",
-      "ttft_s": 11.12,
-      "total_s": 11.12,
-      "completion_tokens": 1164,
+      "ttft_s": 20.68,
+      "total_s": 20.68,
+      "completion_tokens": 1169,
       "prompt_tokens": null,
       "finish_reason": "stop"
     },
     {
-      "ts": 1792564968.2433999,
-      "tag": "hkg_specs_p8",
-      "provider": "nim",
-      "model": "nvidia/nemotron-3-ultra-550b-a55b",
-      "attempt": 1,
-      "status": "ok",
-      "ttft_s": 17.64,
-      "total_s": 17.64,
-      "completion_tokens": 605,
-      "prompt_tokens": null,
-      "finish_reason": "stop"
-    },
-    {
-      "ts": 1792564975.4520862,
+      "ts": 1792586084.2043028,
       "tag": "hkg_specs_p6",
       "provider": "nim",
       "model": "nvidia/nemotron-3-ultra-550b-a55b",
       "attempt": 1,
       "status": "ok",
-      "ttft_s": 24.89,
-      "total_s": 24.89,
-      "completion_tokens": 2197,
+      "ttft_s": 14.56,
+      "total_s": 14.56,
+      "completion_tokens": 966,
       "prompt_tokens": null,
       "finish_reason": "stop"
     },
     {
-      "ts": 1792564981.6918538,
+      "ts": 1792586092.6330245,
       "tag": "hkg_specs_p5",
       "provider": "nim",
       "model": "nvidia/nemotron-3-ultra-550b-a55b",
       "attempt": 1,
       "status": "ok",
-      "ttft_s": 31.18,
-      "total_s": 31.18,
-      "completion_tokens": 1014,
+      "ttft_s": 26.69,
+      "total_s": 26.69,
+      "completion_tokens": 1174,
       "prompt_tokens": null,
       "finish_reason": "stop"
     },
     {
-      "ts": 1792565016.2389283,
+      "ts": 1792586102.081855,
+      "tag": "hkg_specs_p8",
+      "provider": "nim",
+      "model": "nvidia/nemotron-3-ultra-550b-a55b",
+      "attempt": 1,
+      "status": "ok",
+      "ttft_s": 14.04,
+      "total_s": 14.04,
+      "completion_tokens": 737,
+      "prompt_tokens": null,
+      "finish_reason": "stop"
+    },
+    {
+      "ts": 1792586106.639277,
+      "tag": "hkg_specs_p22",
+      "provider": "nim",
+      "model": "nvidia/nemotron-3-ultra-550b-a55b",
+      "attempt": 1,
+      "status": "ok",
+      "ttft_s": 14.0,
+      "total_s": 14.01,
+      "completion_tokens": 7,
+      "prompt_tokens": null,
+      "finish_reason": "stop"
+    },
+    {
+      "ts": 1792586170.5856748,
       "tag": "hkg_specs_p7",
       "provider": "nim",
       "model": "nvidia/nemotron-3-ultra-550b-a55b",
       "attempt": 1,
       "status": "ok",
-      "ttft_s": 65.58,
-      "total_s": 65.65,
-      "completion_tokens": 2625,
+      "ttft_s": 86.33,
+      "total_s": 86.38,
+      "completion_tokens": 2678,
       "prompt_tokens": null,
       "finish_reason": "stop"
     }
   ],
   "groundtruth_comparison": {
     "ic": "OPA2134",
-    "score": 96.8,
+    "score": 97.2,
     "pins": {
       "precision": 1.0,
       "recall": 1.0,
@@ -121,31 +121,31 @@
       "violations": []
     },
     "spec_rows": {
-      "precision": 0.794,
-      "recall": 0.931,
-      "f1": 0.857,
-      "tp": 54,
-      "pred": 68,
+      "precision": 0.855,
+      "recall": 0.914,
+      "f1": 0.883,
+      "tp": 53,
+      "pred": 62,
       "gt": 58
     },
-    "electrical_spec_recall": 0.923,
-    "spec_value_accuracy": 0.889,
+    "electrical_spec_recall": 0.897,
+    "spec_value_accuracy": 0.951,
     "spec_category_accuracy": 1.0,
     "category_confusion": {
       "ABS_MAX": {
         "ABS_MAX": 7
       },
       "ESD": {
-        "ESD": 2
+        "ESD": 3
       },
       "RECOMMENDED": {
-        "RECOMMENDED": 3
+        "RECOMMENDED": 2
       },
       "THERMAL": {
         "THERMAL": 6
       },
       "ELECTRICAL": {
-        "ELECTRICAL": 36
+        "ELECTRICAL": 35
       }
     },
     "nonelectrical_leak_rate": 0.0,
@@ -193,8 +193,8 @@
   },
   "provenance_audit": {
     "mode": "groundtruth_free_provenance",
-    "fidelity_score_pct": 84.2,
-    "status": "ACCEPTABLE",
+    "fidelity_score_pct": 85.1,
+    "status": "TRUSTWORTHY",
     "pin_provenance": {
       "pins": 8,
       "grounded": 8,
@@ -202,37 +202,21 @@
       "ungrounded": []
     },
     "spec_provenance": {
-      "specs": 68,
-      "grounded": 59,
-      "grounded_pct": 86.8,
+      "specs": 62,
+      "grounded": 56,
+      "grounded_pct": 90.3,
       "by_category": {
         "ABS_MAX": 7,
-        "ESD": 2,
+        "ESD": 5,
         "RECOMMENDED": 3,
-        "THERMAL": 20,
-        "ELECTRICAL": 36
+        "THERMAL": 12,
+        "ELECTRICAL": 35
       },
       "ungrounded_examples": [
-        {
-          "symbol": "VI",
-          "category": "ABS_MAX",
-          "page": 5,
-          "numbers_on_page": false,
-          "evidence_overlap": 1.0,
-          "grounded": false
-        },
         {
           "symbol": "ISC",
           "category": "ABS_MAX",
           "page": 5,
-          "numbers_on_page": false,
-          "evidence_overlap": 1.0,
-          "grounded": false
-        },
-        {
-          "symbol": "R\u03b8JC(bot)",
-          "category": "THERMAL",
-          "page": 6,
           "numbers_on_page": false,
           "evidence_overlap": 1.0,
           "grounded": false
@@ -265,14 +249,6 @@
           "symbol": "Zic",
           "category": "ELECTRICAL",
           "page": 7,
-          "numbers_on_page": false,
-          "evidence_overlap": 1.0,
-          "grounded": false
-        },
-        {
-          "symbol": "VO",
-          "category": "ELECTRICAL",
-          "page": 8,
           "numbers_on_page": false,
           "evidence_overlap": 1.0,
           "grounded": false
@@ -339,7 +315,7 @@
         "type": "POWER_FEED",
         "origin": "datasheet",
         "delay_source": "ts",
-        "condition": "Negative power supply required for output operation"
+        "condition": "Negative power supply required for channel A output operation"
       },
       {
         "from": "V_N",
@@ -348,7 +324,7 @@
         "type": "POWER_FEED",
         "origin": "datasheet",
         "delay_source": "ts",
-        "condition": "Negative power supply required for output operation"
+        "condition": "Negative power supply required for channel B output operation"
       },
       {
         "from": "V_N",
@@ -411,7 +387,7 @@
         "type": "POWER_FEED",
         "origin": "datasheet",
         "delay_source": "ts",
-        "condition": "Positive power supply required for output operation"
+        "condition": "Positive power supply required for channel A output operation"
       },
       {
         "from": "V_P",
@@ -420,7 +396,7 @@
         "type": "POWER_FEED",
         "origin": "datasheet",
         "delay_source": "ts",
-        "condition": "Positive power supply required for output operation"
+        "condition": "Positive power supply required for channel B output operation"
       },
       {
         "from": "V_P",

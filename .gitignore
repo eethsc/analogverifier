@@ -59,3 +59,10 @@ generated_designs/*.db
 output_interactive/
 output_test_interactive/
 uploads/
+
+# E2E run outputs & simulator artefacts
+output_e2e/**/testbenches/
+benchmark_results/testbench_calibration/**/*.cir
+benchmark_results/testbench_calibration/**/*.raw
+benchmark_results/testbench_calibration/**/*.log
+benchmark_results/testbench_calibration/**/*.db

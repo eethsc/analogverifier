@@ -1,414 +1,267 @@
-# Autonomous Analog Circuit Designer & Neuro-Symbolic Verifier
+# AnalogVerifier — 데이터시트 기반 아날로그 IC 자동 합성·검증
 
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
-[![Status: mid-term WIP](https://img.shields.io/badge/Status-mid--term%20WIP-yellow.svg)](#-current-status-mid-term-2026-10-21)
-[![Verification: LTspice](https://img.shields.io/badge/Simulation-LTspice%20XVII%2F24-red.svg)](https://www.analog.com/en/resources/design-tools-and-calculators/ltspice-simulator.html)
-[![Symbolic Engine: SymPy](https://img.shields.io/badge/Oracles-SymPy-blueviolet.svg)](https://www.sympy.org/)
+[![Status: 중간발표 WIP](https://img.shields.io/badge/Status-중간발표%20WIP-yellow.svg)](#-현재-상태-2026-10-21)
 
-An autonomous, first-principles **AI Analog IC Synthesis and Neuro-Symbolic Verification Platform**. 
+IC 데이터시트(PDF)를 읽어 **하드웨어 지식 그래프(HKG)** 와 **포트 의존성 그래프(PDG)** 를 만듭니다.
+그다음 LLM으로 SPICE netlist를 합성하고, **고정된(결정적) LTspice 테스트벤치**로 데이터시트 spec을 측정합니다.
+결과는 다시 LLM에 피드백되어 폐루프로 수정됩니다.
 
-This system ingests unstructured commercial IC datasheets (PDF) and natural language user intent, constructs layout-aware **Hardware Knowledge Graphs (HKG)** and **Port Dependency Graphs (PDG)**, synthesizes transistor-level SPICE netlists from scratch using LLMs (template-free), and executes closed-loop self-healing verification through headless **LTspice** simulations and **SymPy** formal interval oracles.
+> ⚠️ **정정 (2026-10-21).** 이전 README의 "10개 IC 91.7–100 % 통과" 표는 실제 실행 결과가 아니었습니다.
+> 실제 저장된 결과(`benchmark_results/10_IC_BENCHMARK_SUMMARY.json`)는 **9개 IC 0 %, TLC2932A 2 %** 입니다.
+> 원인은 두 가지였습니다. 첫째, LLM이 작성한 테스트벤치가 spec을 측정하지 못했습니다(`not observed`).
+> 둘째, 동작 조건과 절대최대정격까지 검증 대상 spec으로 계산됐습니다. 이번 작업으로 두 문제를 모두 고쳤습니다.
 
 ---
 
-## 🚧 Current Status (mid-term, 2026-10-21)
+## 🚧 현재 상태 (2026-10-21)
 
-This is a **work in progress** for the mid-term presentation. Summary:
-
-| Stage | Status | Evidence |
+| 단계 | 상태 | 근거 |
 |---|---|---|
-| Phase 1 – PDF → HKG extraction | ✅ **Works and is measured.** Page-classified parsing, column-tagged spec tables, page- and quote-level provenance, two-pass parallel LLM extraction on NVIDIA NIM | PDG fidelity GT score **92.5 / 100** on 8 ICs |
-| Phase 2 – HKG → PDG + schedule σ(p) | ✅ **Works and is measured.** Each edge is marked as datasheet-derived or rule-injected; delays are taken from datasheet timing specs (settling, propagation, SR, GBW) when available | Dependency recall 0.77–1.00, schedule order consistency 1.00 |
-| PDG fidelity verification | ✅ **New.** (A) ground-truth-free provenance audit on every run; (B) ground-truth benchmark | `run_pdg_benchmark.py`, `benchmarks/pdg_groundtruth/` |
-| LLM back-end | ✅ **Replaced.** Provider-agnostic client (NIM / OpenRouter) with streaming, timeouts, model fallback and latency telemetry | `ai_analog_designer/llm_client.py`, latency table below |
-| Phase 3 – netlist synthesis | ⚠️ **Unchanged, not re-validated** since the LLM switch | – |
-| Phase 4 – testbench synthesis | ❌ **Main blocker.** LLM-written testbenches do not emit `.meas` for most specs | legacy run: 0–2 % pass, mostly "not observed" |
-| Phase 5 – oracle and evaluation | ⚠️ Pass rate still uses all specs (including unmeasured ones) as the denominator | `closed_loop_evaluator.py` |
-| Web Studio (browser) | ⚠️ Not re-tested after the changes; a Playwright E2E test is planned | – |
+| Phase 1 – PDF → HKG 추출 | ✅ **동작·측정 완료** | 8개 IC 정답(GT) 비교 평균 **95.2 / 100** (`openai/gpt-6-luna`) |
+| Phase 2 – HKG → PDG·시작 순서 σ(p) | ✅ **동작·측정 완료** | 의존성 recall 0.86–1.00, 시작 순서 일관성 1.00 |
+| PDG 충실도 검증 | ✅ **신규** | 정답 없는 출처(provenance) 감사 + 정답 비교 벤치마크 |
+| Phase 4/5 – 결정적 테스트벤치 + 평가 | ✅ **신규·제조사 모델로 검증 완료** | LM393 / NE555 vendor 모델 커버리지 100 %, 오판정 0건 |
+| 컴파일 사전 점검 + LTspice 오류 피드백 | ✅ **신규** | 깨진 netlist는 측정 전에 걸러지고, 오류 줄이 그대로 LLM에 전달됨 |
+| Phase 3 – LLM netlist 합성 | ❌ **핵심 병목** | 합성된 LM358 netlist가 아직 컴파일·수렴 단계를 통과하지 못함 (아래 참고) |
+| Web Studio (브라우저) | ✅ **Playwright E2E 통과** | PDG 추출·시각화·타임라인·경로 샌드박스 검증 |
+| LLM 백엔드 | ✅ OpenRouter + NVIDIA NIM | 작업별 모델 라우팅, 타임아웃·fallback, 비용 상한 |
 
-### What changed in this iteration
-1. **LLM provider.** OpenRouter (the key had expired) was replaced by **NVIDIA NIM**.
-   - Default model: `nvidia/nemotron-3-ultra-550b-a55b`.
-   - Fallbacks: `deepseek-ai/deepseek-v4.1-flash`, then `z-ai/glm-5.3-flash`.
-   - The default was chosen from a latency benchmark plus the accuracy benchmark below.
-   - `openrouter_client.OpenRouterClient` is kept as a compatibility alias.
-2. **PDF parser** (`pdf_parser.py`).
-   - Pages are classified as pin / abs-max / recommended / electrical / thermal / ESD / functional, and the table of contents is skipped.
-   - Spec pages are rebuilt from word coordinates with `{MIN}/{TYP}/{MAX}` column tags. Before this, the LLM often put a lone TYP value into the MIN slot.
-3. **HKG builder** (`hardware_kg_builder.py`).
-   - The pin and dependency pass and the spec pass now run as separate prompts. Specs are extracted one page per call, in parallel.
-   - Each pin and spec row must cite a `page` and a verbatim `evidence` quote.
-   - Each spec row is categorised (`ELECTRICAL`, `ABS_MAX`, `RECOMMENDED`, `THERMAL`, `ESD`), so ratings and operating conditions are no longer treated as testable specs.
-   - Pins with the same name are merged into one net (e.g. the four ANODE pins of the TL431 SOIC-8).
-4. **PDG extractor** (`pdg_extractor.py`).
-   - Datasheet edges come first. Precedence-rule edges are added only for pins left without a driver.
-   - Each edge records `origin`, `delay_source` and `kind` (causal or sequencing).
-5. **Fidelity verifier** (`pdg_fidelity_verifier.py`). It was rewritten. The old score was mostly self-referential (for example, "pin coverage" compared the PDG against the same extraction).
-
-### How PDG fidelity is verified
-- **(A) Ground-truth-free audit.** This runs inside the pipeline and writes `*_PDG_FIDELITY_AUDIT.json`. It checks:
-  - every pin name and quote actually appears on the cited page;
-  - every spec number appears on the cited page;
-  - the graph is a DAG, and every output is reachable from a supply;
-  - the share of edges that come from the datasheet rather than from rules;
-  - the share of edge delays that come from datasheet timing specs.
-
-  It catches hallucinations without any labels.
-- **(B) Ground-truth benchmark.** `benchmarks/pdg_groundtruth/*.json` holds 8 hand-labelled ICs: LM358, OPA2134, INA128, LM393, NE555, TL431, LM317 and LM386. Every entry has a page number and an evidence quote. The benchmark reports:
-  - pin precision/recall and role accuracy;
-  - causal dependency precision/recall (full PDG, and the datasheet layer only);
-  - schedule order consistency: σ(u) < σ(v) for every ground-truth dependency;
-  - electrical spec-row recall and min/typ/max value accuracy;
-  - leakage, i.e. how many ABS_MAX/RECOMMENDED rows were wrongly marked ELECTRICAL;
-  - timing-spec recall.
-
-  Weighted GT score = 0.20·pin F1 + 0.10·role + 0.15·dep F1 + 0.05·schedule + 0.20·spec recall + 0.15·value accuracy + 0.10·(1 − leak) + 0.05·timing.
-
-### Known issues / next steps
-1. **Testbench generation.** Replace the LLM-written testbenches with deterministic `.meas` templates per device class (op-amp, comparator, regulator, reference, timer). Calibrate them first against vendor macromodels that ship with LTspice (`LM393.sub`, `NE555.sub`, `LT1013.sub`, ...), so the verifier is known to be correct before it judges LLM netlists.
-2. **Pass-rate reporting.** Report measurement coverage and pass rate among measured specs separately. Restrict the spec set to `category == ELECTRICAL` and the chosen operating condition.
-3. **Rate limiting.** Handle NIM HTTP 429 with a global concurrency limiter, then finish the column-tagging benchmark run for OPA2134 and TL431. Investigate the NE555 spec-recall regression.
-4. Re-run the closed-loop synthesis on the new HKG and record honest pass rates.
-5. Browser E2E test of Web Studio (Playwright), plus `pdf_path` sandboxing in `/api/extract_pdg` and `/api/generate`.
-6. Repository hygiene: 170 git-ignored artefacts (`*.raw`, `*.db`, `*.log`) are still tracked; there are 3 parallel legacy packages (`agent_engine/`, `analog_verifier/`, `ai_analog_designer/`); there are no unit tests yet.
+### 요약
+- **데이터시트 이해(PDG)와 검증기(테스트벤치)는 신뢰할 수 있는 수준**에 도달했습니다. 둘 다 정답 또는 제조사 모델과 대조해 확인했습니다.
+- **남은 병목은 LLM이 시뮬레이션 가능한 netlist를 만드는 단계**입니다. 검증기가 오류를 정확히 짚어 피드백하지만, 아직 컴파일·수렴을 통과한 LM358 netlist는 없습니다.
 
 ---
 
-## 📑 Table of Contents
-- [Current Status](#-current-status-mid-term-2026-10-21)
-- [Key Features](#-key-features)
-- [System Architecture](#-system-architecture)
-- [Repository Structure](#-repository-structure)
-- [Quick Start](#-quick-start)
-  - [1. Installation & Environment Setup](#1-installation--environment-setup)
-  - [2. Launching the Interactive Web Studio](#2-launching-the-interactive-web-studio)
-  - [3. CLI Usage](#3-cli-usage)
-- [Pipeline Workflow (6 Phases)](#-pipeline-workflow-6-phases)
-- [Benchmark Results (actual, measured)](#-benchmark-results-actual-measured)
-- [Telemetry & Step-by-Step Tracing](#-telemetry--step-by-step-tracing)
-- [References & Citations](#-references--citations)
+## 1. PDG 충실도 검증 — "PDG가 데이터시트와 일치하는가?"
+
+두 가지 방법을 함께 씁니다.
+
+**(A) 정답 없이 하는 출처 감사** (`PDGFidelityVerifier.audit_pdg`): 파이프라인을 실행할 때마다 돌고, 라벨 없이도 LLM이 지어낸 내용을 잡아냅니다. 검사 항목은 다음과 같습니다.
+- 추출한 핀 이름과 인용문이 **인용한 페이지에 실제로 있는지**
+- spec 숫자가 **인용한 페이지에 실제로 있는지**
+- 그래프에 순환이 없는지(DAG), 모든 출력이 전원에서 도달 가능한지
+- 연결 중 데이터시트에서 나온 비율과 규칙으로 추가된 비율
+- 지연 시간 중 데이터시트 타이밍 spec에서 나온 비율
+
+**(B) 정답 비교 벤치마크** (`run_pdg_benchmark.py`): 정답은 `benchmarks/pdg_groundtruth/*.json`에 있습니다. 8개 IC(LM358, OPA2134, INA128, LM393, NE555, TL431, LM317, LM386)를 손으로 라벨링했고, 모든 항목에 페이지 번호와 원문 인용이 붙어 있습니다. 측정 지표는 다음과 같습니다.
+- 핀 P/R, 핀 역할 정확도
+- 인과 의존성 P/R, 시작 순서 일관성(σ(u) < σ(v))
+- ELECTRICAL spec 행 recall, min/typ/max 값 정확도
+- 절대최대정격·권장조건이 검증 대상으로 잘못 섞인 비율(leak)
+- 타이밍 spec recall
+
+지표 정의는 [`benchmarks/README.md`](benchmarks/README.md)에 있습니다.
+
+### 결과 (모델별 평균 GT 점수)
+
+| 추출 모델 | 평균 GT 점수 | IC당 소요 시간 | 비용 (8개 IC) |
+|---|---|---|---|
+| **openai/gpt-6-luna (OpenRouter, 현재 기본값)** | **95.2** | 28–120 s | 약 $0.03 |
+| nvidia/nemotron-3-ultra-550b-a55b (NIM, 열 태깅 적용) | 94.0 | 80–200 s | 무료 (요청 한도 있음) |
+| z-ai/glm-5.3-flash (OpenRouter) | 4개 IC 평균 85.1 (중단) | 24–68 s | – |
+| deepseek-ai/deepseek-v4.1-flash (NIM) | 82.0 (7개 IC) | – | – |
+
+`openai/gpt-6-luna`의 IC별 결과입니다(`benchmark_results/pdg_fidelity/openai_gpt-6-luna/SUMMARY.md`).
+
+| IC | GT 점수 | 핀 P/R | 의존성 P/R | 전기 spec recall | 값 정확도 | 정격 leak |
+|---|---|---|---|---|---|---|
+| LM358 | **100.0** | 1.00/1.00 | 1.00/1.00 | 1.00 | 1.00 | 0.00 |
+| NE555 | 98.9 | 1.00/1.00 | 1.00/0.92 | 1.00 | 0.96 | 0.00 |
+| LM393 | 97.5 | 1.00/1.00 | 1.00/1.00 | 1.00 | 1.00 | 0.00 |
+| OPA2134 | 97.3 | 1.00/1.00 | 1.00/1.00 | 0.92 | 0.92 | 0.00 |
+| LM386 | 94.2 | 1.00/0.88 | 0.58/0.88 | 1.00 | 1.00 | 0.00 |
+| INA128 | 92.8 | 1.00/0.88 | 0.60/0.86 | 0.96 | 0.99 | 0.06 |
+| TL431 | 90.5 | 1.00/1.00 | 0.67/1.00 | 1.00 | 0.90 | 0.00 |
+| LM317 | 90.4 | 1.00/1.00 | 0.67/1.00 | 0.95 | 0.96 | 0.00 |
+
+점수를 올린 핵심 개선은 다음과 같습니다.
+- spec 표 페이지를 단어 좌표로 다시 구성하고, 숫자마다 `{MIN}/{TYP}/{MAX}` 열 태그를 붙였습니다. 이것으로 값 정확도가 0.68에서 0.96으로 올랐습니다.
+- spec을 페이지마다 따로 병렬 추출합니다.
+- 각 항목에 근거 페이지와 원문 인용을 받습니다.
+- 각 행을 ELECTRICAL / ABS_MAX / RECOMMENDED / THERMAL / ESD 중 하나로 분류합니다.
 
 ---
 
-## 🚀 Key Features
+## 2. 결정적 테스트벤치 (Phase 4/5 교체)
 
-### 1. Template-Free AI Circuit Synthesis
-* **First-Principles Netlist Generation**: Synthesizes transistor sizing ($W/L$), bias branches, differential pairs, active loads, Miller compensation, and level shifters from scratch using LLMs (via OpenRouter).
-* **No Hardcoded Schematics**: Completely eliminates rigid schematic templates; designs any analog architecture (op-amps, comparators, bandgaps, LDOs, timers, audio amplifiers, PLLs) dynamically.
+LLM이 테스트벤치를 작성하던 방식은 폐기했습니다. 대신 **spec 종류별 고정 LTspice fixture**가 측정합니다. 관련 파일은 다음과 같습니다.
+- `neuro_symbolic_verifier/spec_planner.py`: 소자 종류 판별, 핀 역할 매핑, spec을 측정 종류(kind)로 분류, 측정 조건(VS·RL·IOUT 등) 파싱
+- `neuro_symbolic_verifier/deterministic_testbench.py`: 측정 종류별 fixture. 각 fixture는 DUT 인스턴스 1개와 이름이 고정된 `.meas`로 구성됩니다.
+  - op-amp: VOS, IB, IOS, IQ, AOL, GBW, PM, CMRR, PSRR, SR, 출력 스윙, ISC, IO, 노이즈
+  - comparator: VIO, IIB, IIO, AVD, VOL, IOL, IOH, ICC, 응답 시간
+  - 555: VTH, VTRIG, VRESET, VCONT, VOL, VOH, ICC, 핀 전류, DISCH, tr/tf
+  - TL431: Vref, Iref, Imin, Ioff, ZKA, ΔVref/ΔVKA
+  - LM317: VREF, IADJ, 라인·로드 레귤레이션, ILIM, 리플 제거비
+- `neuro_symbolic_verifier/units.py`: 단위를 정규화합니다. 예를 들어 V/mV를 dB로, µV/V 단위의 CMRR·PSRR을 양의 dB로 바꿉니다.
+- `neuro_symbolic_verifier/verification_flow.py`: 컴파일 사전 점검 → fixture 실행 → 평가 → 피드백 순서로 진행합니다.
 
-### 2. Layout-Aware PDF Ingestion & Hardware Knowledge Graphs (HKG)
-* **Multi-Modal Document Parsing**: Decomposes PDF tables, prose, pinout diagrams, and continued specification tables across up to 30 pages.
-* **Semantic Port & Parameter Extraction**: Resolves pin functions, operational voltage limits, load capacitance stability ranges ($C_L$), and all static/dynamic electrical specifications.
+**보고 방식이 바뀌었습니다.** 측정 커버리지(측정된 수 / 측정 가능한 spec 수)와 측정된 spec 중 통과율을 따로 보고합니다. 측정하지 못한 spec은 더 이상 "통과"나 "실패"로 숨겨지지 않습니다.
 
-### 3. Graph-Symbolic Scheduling & Port Dependency Graph (PDG)
-* **Domain-Invariant Physical Precedence**: Enforces $\text{POWER} \prec \text{BIAS} \prec \text{CONTROL} \prec \text{SIGNAL} \prec \text{OUTPUT}$.
-* **Datasheet-Grounded Settling Dynamics**: Automatically extracts real transient metrics (e.g. Turn-on Settling Time $t_{\text{settle}} = 120\,\mu\text{s}$, Slew Rate $\text{SR}$, GBW, Propagation Delay $t_{\text{pd}}$) to weight graph edges $\delta$.
-* **Critical-Path Scheduling (Algorithm 1)**: Computes time-optimal stimulus schedule $\sigma(p)$ to ensure testbenches are temporally correct-by-construction.
-* **On-Demand Interactive PDG Visualizer**: Generates responsive SVG graphs, Mermaid DAGs, and interactive time-slider HTML simulators.
+### 제조사 모델로 검증기 자체를 검증 (`tools/calibrate_testbench.py`)
 
-### 4. Headless LTspice Simulation & SymPy Formal Oracles
-* **Automated Testbench Synthesis**: Creates `.op`, `.ac`, and `.tran` simulation decks synchronized with $\sigma(p)$.
-* **Symbolic Pass/Fail Assertions**: Evaluates measured parameters against formal physical bounds using deterministic SymPy interval logic, completely preventing LLM numerical hallucinations.
+| 대상 | 측정 커버리지 | PASS | FAIL | 해석 |
+|---|---|---|---|---|
+| **LM393** (TI 모델, LTspice 내장) | **100 %** (16/16) | 14 + typ 1 | 0 (+typ 1*) | 맞는 회로를 통과시킴 |
+| **NE555** (LTspice 내장 모델) | **100 %** (28/28) | 26 + typ 2 | 0 | 맞는 회로를 통과시킴 |
+| LM358 spec × LM741 모델 (다른 부품) | 100 % (31/31) | 13 + typ 3 | 14 | IB·IQ·ISC·스윙 차이를 정확히 잡아냄 |
 
-### 5. Closed-Loop Self-Healing Diagnostics
-* **Automated Refinement Loop**: When specifications are violated or SPICE convergence issues arise, diagnostic feedback (shortfalls, numerical errors, violated constraints) is fed into subsequent synthesis iterations.
-* **Convergence Verification**: Iteratively updates transistor geometry and compensation until specs are met.
+\* LM393의 TTL 입력 응답 시간 행(typ 300 ns)은 100 mV 스텝 조건과 다른 측정 조건이라 FAIL_TYP로 남겼습니다.
 
-### 6. Interactive Web Studio & Real-Time Telemetry
-* **Modern Web Interface** (`http://localhost:8080`): Drag-and-drop PDF upload, quick-prompt chips, real-time 6-phase execution stepper, live streaming console logs, and SPICE netlist viewer.
-* **Fine-Grained Tracing**: Captures millisecond execution spans, input/output contracts, and automated remediation hints for rapid debugging.
+전체 결과는 `benchmark_results/testbench_calibration/CALIBRATION.md`에 있습니다.
 
----
-
-## 🏗 System Architecture
-
-```mermaid
-flowchart TD
-    PDF["Commercial IC Datasheet (PDF)"] --> P1["Phase 1: PDF Layout Decomposition & Multi-Page Table Parsing"]
-    Prompt["Natural Language User Directives"] --> P1
-    
-    P1 --> HKG["Hardware Knowledge Graph (HKG)"]
-    HKG --> P2["Phase 2: Graph-Symbolic Scheduling (PDG)"]
-    
-    subgraph "AnalogVerifier Scheduling"
-        P2 --> PDG["Port Dependency Graph G=(P, E, δ)"]
-        PDG --> Sched["Critical-Path Schedule σ(p) via Algorithm 1"]
-    end
-
-    subgraph "Closed-Loop Synthesis & Verification Loop"
-        Sched --> P3["Phase 3: AI Netlist Synthesis (First Principles)"]
-        P3 --> Val["Netlist Validator & Sanitizer"]
-        Val --> P4["Phase 4: LTspice Testbench Decks (.op, .ac, .tran)"]
-        P4 --> P5["Phase 5: Headless LTspice & SymPy Formal Oracles"]
-        P5 --> P6["Phase 6: Closed-Loop Diagnostic Feedback"]
-        P6 -- "Spec Shortfalls & Diags" --> P3
-    end
-
-    P5 --> Pass{"Pass Rate ≥ Threshold?"}
-    Pass -- Yes --> Export["Final Verified Netlist, Visual Dashboard & Reports"]
-    Pass -- No (Max Loops) --> Export
-```
+캘리브레이션 중에 찾아 고친 문제는 다음과 같습니다.
+- 1 ns 자극 엣지 때문에 시뮬레이션이 멈추는 문제 → 엣지를 10 ns로 바꿨습니다.
+- 공급전원 0 V→VS 램프에서 일부 vendor 모델이 수렴하지 않는 문제 → DC 전원을 기본값으로 하고, 램프는 `TB_RAMP_SUPPLY=1`로 켤 수 있게 했습니다.
+- ±15 V 전용 매크로모델 → `TB_SPLIT_SUPPLY=1` 옵션을 추가했습니다.
 
 ---
 
-## 📂 Repository Structure
+## 3. 폐루프 합성 (Phase 3) — 현재 병목
 
-```
-├── ai_analog_designer/               # Core Autonomous Analog Designer Engine
-│   ├── autonomous_design_agent.py    # Main 6-Phase Orchestrator Agent
-│   ├── openrouter_client.py          # Resilient OpenRouter LLM Client (JSON auto-repair)
-│   ├── circuit_synthesis/            # Phase 3: AI Netlist Synthesis & Validation
-│   │   ├── ai_circuit_architect.py   # First-principles transistor netlist generator
-│   │   └── netlist_validator.py      # Subckt topology & syntax validation
-│   ├── neuro_symbolic_verifier/      # Phase 4 & 5: Simulation & Symbolic Verification
-│   │   ├── testbench_synthesizer.py  # LTspice testbench generator aligned with PDG
-│   │   ├── closed_loop_evaluator.py  # LTspice headless runner & measurement parser
-│   │   └── sympy_oracle_engine.py    # Deterministic formal interval oracle
-│   ├── pdf_to_graph/                 # Phase 1 & 2: PDF Parsing, HKG & PDG
-│   │   ├── pdf_parser.py             # Layout-aware multi-page continuation PDF parser
-│   │   ├── hardware_kg_builder.py    # Hardware Knowledge Graph constructor
-│   │   ├── pdg_extractor.py          # Port Dependency Graph & Algorithm 1 scheduler
-│   │   └── pdg_visualizer.py         # On-demand SVG / Mermaid / Interactive HTML visualizer
-│   ├── tracing/                      # Step-by-Step Telemetry & Tracing
-│   │   └── execution_tracer.py       # Millisecond span recording & HTML trace exporter
-│   ├── visualization/                # Process Visualizer & Reporting
-│   │   └── process_visualizer.py     # Comprehensive visual dashboard generator
-│   └── web_studio/                   # Interactive Web Studio Application
-│       └── studio_server.py          # HTTP server, REST API endpoints, and web UI
-│
-├── benchmark_results/                # 10 Commercial IC Benchmark Audit Results
-│   ├── LM358/, NE555/, LM393/, ...   # Per-IC netlists, testbenches, traces, and dashboards
-│   ├── 10_ANALOG_IC_BENCHMARK_REPORT.md # Comprehensive 10 IC verification audit report
-│   ├── 10_IC_BENCHMARK_SUMMARY.json     # Machine-readable benchmark metrics
-│   └── ANALOG_VERIFIER_PROCESS_VISUALIZER.html # Unified interactive visualizer
-│
-├── testcases/                        # Pre-installed Commercial IC Datasheet PDFs
-│   ├── lm358.pdf, ne555.pdf, lm393.pdf, tl431.pdf, lm317.pdf, lm386.pdf
-│   ├── ina128.pdf, opa2134.pdf, tlc2932a.pdf, cdcvf2505-q1.pdf, tpa3116d2.pdf
-│
-├── uploads/                          # User-uploaded datasheets
-├── output_interactive/               # Interactive Studio generated task artifacts
-│
-├── run_studio.py                     # Entry point: Interactive Web Studio Server
-├── run_interactive_designer.py       # Entry point: Interactive CLI design agent
-├── visualize_pdg.py                  # Entry point: Standalone PDG visualizer CLI
-├── run_10_ic_benchmark.py            # Entry point: 10 IC automated benchmark suite
-└── run_visualizer.py                 # Entry point: Visual dashboard exporter
-```
+LM358을 대상으로 실제 E2E를 실행했습니다(`output_e2e/`).
+- **NIM nemotron-3-ultra 합성 결과:** 서브서킷 중첩, `\` 줄 이어쓰기, netlist 안의 산문(`... repeat 18 more times`), 정의되지 않은 파라미터 때문에 LTspice가 컴파일하지 못했습니다.
+- **OpenRouter claude-sonnet-5.5 합성 결과:** validator가 최상위 `.model` 줄을 주석으로 바꾸는 버그 때문에 `Undefined model "qpin"`이 발생했습니다. 이 버그는 고쳤습니다.
+- **gemini-3.8-flash 합성 결과:** 동작점(operating point)이 수렴하지 않았습니다(컴파일 점검 60초 타임아웃).
+
+이를 바탕으로 이번에 다음을 고쳤습니다.
+1. **컴파일 사전 점검:** `.op` 한 번으로 먼저 확인하고, 실패하면 fixture 55개를 돌리지 않습니다. LTspice 오류 메시지와 문제가 된 netlist 줄을 그대로 LLM에 피드백합니다.
+2. **잘못된 피드백 수정:** 측정값이 0개일 때 "All measured specifications passed"라는 피드백이 나가던 버그를 고쳤습니다.
+3. **validator 구조 보정:** 중첩 서브서킷을 밖으로 꺼내고, `\` 이어쓰기를 `+`로 바꾸고, 산문을 주석 처리합니다. 최상위 `.model`·`.param`은 그대로 보존합니다.
+4. **합성 프롬프트 보강:** 금지 규칙(중첩, `\`, 산문, 정의되지 않은 파라미터)을 추가했습니다. 실제 측정 조건(VS, RL, 측정 종류)도 프롬프트에 넣었습니다.
+5. **기록과 재사용:** 가장 좋은 회차의 netlist를 보관하고(`*_BEST.cir`), LLM 원본 출력을 저장합니다(`*_iterN.raw.cir`). `--reuse-hkg` 옵션으로 Phase 1의 LLM 호출을 건너뛸 수 있습니다.
+
+**다음 단계:** 수정한 validator와 프롬프트로 synthesis 모델 3종(sonnet-5.5 / gpt-6-sol / gemini-3.8-flash) 비교를 다시 실행합니다. 이번 비교는 종료된 이전 실행에서 남은 LTspice 프로세스가 쌓여 중단했습니다.
 
 ---
 
-## ⚡ Quick Start
+## 4. LLM 백엔드와 응답 시간
 
-### 1. Installation & Environment Setup
+`ai_analog_designer/llm_client.py`는 OpenAI 호환 API를 쓰는 provider 공용 클라이언트입니다(NIM / OpenRouter).
+- 스트리밍으로 받으며, 첫 토큰 대기(TTFT)에 90초, 전체 응답에 240초 타임아웃이 있고 초과하면 다음 모델로 넘어갑니다.
+- 프로세스 전체에서 동시 요청 수를 제한해(`LLM_MAX_CONCURRENCY`) HTTP 429를 막습니다.
+- 작업별로 모델을 따로 지정할 수 있습니다: `LLM_EXTRACT_MODEL`(Phase 1), `LLM_SYNTH_MODEL`(Phase 3).
+- OpenRouter 비용을 호출마다 집계하고, `LLM_BUDGET_USD`에 도달하면 중단합니다.
 
-#### Requirements
-* Python 3.10+
-* LTspice installed on your system (e.g. `C:\Users\<user>\AppData\Local\Programs\ADI\LTspice\LTspice.exe` or in standard `Program Files`)
+### OpenRouter 측정 (`tools/llm_bench.py`, 2회 실행의 중앙값)
 
-#### Virtual Environment & Dependencies
+| 모델 | spec 페이지 추출 (s) | netlist 합성 (s) | 비용/호출 (추출 / 합성) | 비고 |
+|---|---|---|---|---|
+| **openai/gpt-6-luna** | 28.9 | 21.8 | $0.0024 / $0.0007 | **추출 기본값**: 정확도 1위(95.2) |
+| anthropic/claude-haiku-5.5 | 19.6 | 40.3 | $0.0033 / $0.0042 | fallback |
+| z-ai/glm-5.3-flash | 32.2 | 16.4 | $0.0007 / $0.0010 | 저렴하지만 정확도 85 |
+| anthropic/claude-sonnet-5.5 | 25.5 | **8.5** | $0.062 / $0.014 | **합성 기본값** |
+| google/gemini-3.8-flash | 92.4 | 14.5 | $0.024 / $0.0067 | 추출이 느림 |
+| deepseek/deepseek-v4.1-flash, qwen/qwen3.8-flash | 빈 응답 | – | – | 사용 불가 |
+
+### NVIDIA NIM 측정 (`tools/nim_latency_bench.py`)
+- **편차가 큽니다.** 같은 모델도 3–52초로 응답 시간이 흔들립니다. LM358 Phase 1에서는 첫 토큰 대기 90초 타임아웃이 3번 나서 fallback으로 넘어갔고, 그 결과 Phase 1에만 **약 5분**이 걸렸습니다.
+- **thinking을 켜면 5–30배 느려집니다.** 그래서 기본값을 끔으로 했습니다(`chat_template_kwargs`).
+- **결론:** 속도와 안정성 때문에 현재 기본 provider는 **OpenRouter**입니다. NIM은 `LLM_PROVIDER=nim`으로 계속 쓸 수 있습니다.
+
+원본 데이터는 `benchmark_results/LLM_BENCH_openrouter.json`, `benchmark_results/NIM_LATENCY_BENCH*.json`에 있습니다.
+
+---
+
+## 5. Web Studio 브라우저 테스트
+
+`tests/test_web_studio_pdg.py`는 실제 Chromium을 Playwright로 조작하는 E2E 테스트입니다.
+1. 페이지를 열고 샘플 IC 목록(11개)이 로드되는지 확인합니다.
+2. Sample 모드에서 LM393을 고르고 **Extract & Visualize PDG**를 누르면, SVG 그래프(노드 8개)와 핀 표(8행)가 렌더링되는지 확인합니다.
+3. 타임라인 슬라이더를 끝까지 옮기면 모든 핀이 Active로 바뀌는지 확인합니다.
+4. 허용 범위 밖 경로를 보내면 `/api/extract_pdg`가 **HTTP 400**을 돌려주는지 확인합니다(경로 샌드박스).
+5. 콘솔 오류가 0개인지 확인합니다.
+
+결과는 **PASS**이고, 스크린샷은 `benchmark_results/web_studio/*.png`에 있습니다. `--generate N` 옵션을 주면 합성 작업까지 브라우저에서 실행합니다.
+
+함께 고친 것은 다음과 같습니다.
+- `pdf_path`를 `testcases/`·`uploads/` 안으로만 허용합니다. 이전에는 임의 파일을 읽을 수 있었습니다.
+- UI의 "Synthesis Model" 표시가 하드코딩된 `gemini-2.5-flash` 대신 실제 설정을 보여줍니다(`/api/llm_config`).
+
+---
+
+## ⚡ 빠른 시작
+
 ```powershell
-# Clone the repository
 git clone https://github.com/eethsc/analogverifier.git
 cd analogverifier
-
-# Create and activate virtual environment
 python -m venv .venv
 .venv\Scripts\Activate.ps1
-
-# Install required dependencies
-pip install -r requirements.txt
+pip install -r requirements.txt playwright
+python -m playwright install chromium-headless-shell
 ```
 
-#### LLM API Key Setup
-Create a `.env` file in the root directory. It is git-ignored, so never commit keys.
+루트에 `.env` 파일을 만듭니다. 이 파일은 git에서 제외되어 있으니 키를 커밋하지 마세요.
 
-NVIDIA NIM is the default provider:
-```env
-LLM_PROVIDER=nim
-NVIDIA_API_KEY="nvapi-..."
-# optional overrides
-# LLM_MODEL=nvidia/nemotron-3-ultra-550b-a55b
-# LLM_FALLBACK_MODELS=deepseek-ai/deepseek-v4.1-flash,z-ai/glm-5.3-flash
-# LLM_TIMEOUT_S=240
-# LLM_TTFT_TIMEOUT_S=90
-# LLM_THINKING=1        # re-enable reasoning (much slower on NIM)
-```
-
-OpenRouter is still supported:
 ```env
 LLM_PROVIDER=openrouter
 OPENROUTER_API_KEY="sk-or-..."
+LLM_EXTRACT_MODEL=openai/gpt-6-luna
+LLM_SYNTH_MODEL=anthropic/claude-sonnet-5.5
+LLM_FALLBACK_MODELS=anthropic/claude-haiku-5.5,z-ai/glm-5.3-flash
+LLM_BUDGET_USD=3.0
+LLM_MAX_CONCURRENCY=6
+
+# NVIDIA NIM을 쓸 경우
+# LLM_PROVIDER=nim
+# NVIDIA_API_KEY="nvapi-..."
 ```
 
-The LTspice path is auto-detected from common install locations. Override it with `LTSPICE_PATH=...\LTspice.exe` if needed.
+LTspice 경로는 자동으로 찾습니다. 찾지 못하면 `LTSPICE_PATH=...\LTspice.exe`로 지정하세요.
 
-#### PDG fidelity benchmark
+### 주요 명령
+
 ```powershell
-python run_pdg_benchmark.py                                  # all ICs with ground truth
-python run_pdg_benchmark.py --ics lm358,ne555 --model deepseek-ai/deepseek-v4.1-flash
-python run_pdg_benchmark.py --reuse                          # re-score cached extractions (no LLM calls)
-python tools/nim_latency_bench.py --no-thinking --runs 2     # NIM latency comparison
-```
-
----
-
-### 2. Launching the Interactive Web Studio
-
-Start the web studio server:
-```powershell
+# Web Studio
 python run_studio.py --port 8080
-```
-Open your web browser and navigate to:
-👉 **`http://localhost:8080`**
 
-#### What you can do in Web Studio:
-1. **Upload any Datasheet (PDF)** or select from 11 pre-loaded commercial ICs.
-2. Click **`[🔍 Extract & Visualize PDG from Datasheet]`** to immediately inspect the Port Dependency Graph, pin activation sequence, and interactive settling timeline.
-3. Enter custom specifications in natural language (e.g. *"Design for 3.3V single supply with rail-to-rail output swing and Iq < 30uA"*).
-4. Click **`[🚀 Synthesize & Verify Circuit Now]`** to watch the autonomous agent execute Phases 1 through 6 in real time with live logs and telemetry.
-5. Copy the verified SPICE subcircuit netlist directly to your clipboard or open the comprehensive Visual Dashboard.
+# 폐루프 설계 (Phase 1 재사용 시 --reuse-hkg)
+python run_interactive_designer.py --pdf testcases/lm358.pdf --iterations 3 --no-open --output-dir output_e2e/lm358
+python run_interactive_designer.py --pdf testcases/lm358.pdf --iterations 3 --reuse-hkg output_e2e/lm358/LM358B_knowledge_graph.json
 
----
+# PDG 충실도 벤치마크
+python run_pdg_benchmark.py --model openai/gpt-6-luna
+python run_pdg_benchmark.py --reuse          # 캐시된 추출 결과로 재채점 (LLM 호출 없음)
 
-### 3. CLI Usage
+# 테스트벤치 검증 (제조사 모델 대조)
+python tools/calibrate_testbench.py
 
-#### A. Autonomous Circuit Design from Datasheet
-```powershell
-python run_interactive_designer.py --pdf testcases/lm358.pdf --prompt "Design for single supply 5V with high slew rate" --iterations 2
-```
+# LLM 응답 시간·비용 비교
+python tools/llm_bench.py --provider openrouter --models openai/gpt-6-luna,anthropic/claude-sonnet-5.5
 
-#### B. Standalone Port Dependency Graph (PDG) Visualizer
-Extract and export the interactive PDG simulator HTML from any datasheet without running synthesis:
-```powershell
-# Inspect pre-installed sample IC
-python visualize_pdg.py --sample LM358 --open
-
-# Inspect custom uploaded PDF
-python visualize_pdg.py --pdf uploads/ref30e.pdf --open
-```
-
-#### C. Run 10-IC Benchmark Audit Suite
-Execute the full benchmark verification audit across 10 commercial analog ICs:
-```powershell
-python run_10_ic_benchmark.py
-```
-
-#### D. Generate Interactive Visual Dashboards
-Export standalone visual process inspection dashboards for all completed designs:
-```powershell
-python run_visualizer.py
+# 브라우저 E2E
+python tests/test_web_studio_pdg.py --ic LM393
 ```
 
 ---
 
-## 🔄 Pipeline Workflow (6 Phases)
+## 📂 주요 구조
 
-| Phase | Module | Description |
-| :--- | :--- | :--- |
-| **Phase 1: Knowledge Ingestion** | `PDFDatasheetParser`<br/>`HardwareKnowledgeGraphBuilder` | Multi-modal document parsing of pin tables, operational conditions, and multi-page continuation tables into a structured NetworkX HKG. |
-| **Phase 2: Graph Scheduling** | `PortDependencyGraphExtractor`<br/>`PDGVisualizer` | Constructs weighted PDG $G=(P,E,\delta)$ applying precedence rules and real datasheet settling times ($t_{\text{settle}}, \text{SR}, \text{GBW}$). Solves $\sigma(p)$ via Algorithm 1. |
-| **Phase 3: AI Netlist Synthesis** | `AICircuitArchitect`<br/>`NetlistValidator` | Synthesizes transistor-level SPICE netlist from first principles with dynamic sizing, bias networks, and structural validation. |
-| **Phase 4: Testbench Synthesis** | `TestbenchSynthesizer` | Generates LTspice analysis decks (`.op`, `.ac`, `.tran`) containing `.meas` directives and stimuli timed precisely to $\sigma(p)$. |
-| **Phase 5: LTspice & SymPy Evaluation** | `ClosedLoopEvaluator`<br/>`SympyOracleEngine` | Executes headless LTspice batch simulations, extracts `.raw` measurements, and checks mathematical satisfaction via SymPy formal intervals. |
-| **Phase 6: Closed-Loop Diagnostics** | `AutonomousAnalogDesignAgent` | Identifies violated constraints and compiler errors, formats actionable remediation prompts, and loops back to Phase 3 for self-healing. |
+```
+ai_analog_designer/
+  llm_client.py                     # provider 공용 LLM 클라이언트 (NIM/OpenRouter, 타임아웃·fallback·비용)
+  pdf_to_graph/
+    pdf_parser.py                   # 페이지 분류 + MIN/TYP/MAX 열 태깅
+    hardware_kg_builder.py          # HKG 추출 (페이지별 병렬, 근거 인용)
+    pdg_extractor.py                # PDG + 시작 순서 σ(p) (origin/delay_source 기록)
+    pdg_fidelity_verifier.py        # (A) 출처 감사, (B) 정답 비교
+  circuit_synthesis/                # LLM netlist 합성 + validator (구조 보정)
+  neuro_symbolic_verifier/
+    spec_planner.py                 # spec → 측정 계획
+    deterministic_testbench.py      # 고정 LTspice fixture + 컴파일 점검 + 평가
+    units.py, verification_flow.py
+  web_studio/studio_server.py       # Web Studio (경로 샌드박스, /api/llm_config)
+benchmarks/pdg_groundtruth/         # 손으로 라벨링한 정답 8개
+benchmark_results/                  # 모든 측정 결과 (PDG, 캘리브레이션, LLM, 브라우저 스크린샷)
+tools/, tests/                      # 벤치마크·캘리브레이션 스크립트, Playwright 테스트
+```
 
----
-
-## 📊 Benchmark Results (actual, measured)
-
-> ⚠️ **Correction (2026-10-21).** Earlier versions of this README showed a 10-IC table with 91.7–100 % pass rates.
-> Those numbers were **not produced by any run**. The real end-to-end run stored in this repository
-> ([`benchmark_results/10_IC_BENCHMARK_SUMMARY.json`](benchmark_results/10_IC_BENCHMARK_SUMMARY.json)) gives
-> **0 % for 9 ICs and 2 % for TLC2932A**. Almost every failure is `Parameter 'X' was not observed in simulation
-> measurements`: the LLM-written testbench never measured the spec. Operating conditions and absolute-maximum
-> ratings (VS, VID, VI, ...) were also counted as specs to verify.
-
-### End-to-end synthesis + verification (legacy run, 2026-10-14)
-
-| Part | Specs counted | Loop 1 | Loop 2 | Final |
-|---|---|---|---|---|
-| LM358, NE555, LM393, TL431, LM317, LM386, INA128, OPA2134, CDCVF2505-Q1 | 15–69 | 0.0 % | 0.0 % | **0.0 %** |
-| TLC2932A | 50 | 0.0 % | 2.0 % | **2.0 %** |
-
-The synthesis loop has **not been re-run** since the changes below; see [Current Status](#-current-status-mid-term-2026-10-21).
-
-### PDG fidelity benchmark (new, 2026-10-21)
-
-This benchmark measures how faithfully the HKG/PDG reflects the datasheet. It uses hand-labelled ground truth for
-8 ICs and was run with the NVIDIA NIM model `nvidia/nemotron-3-ultra-550b-a55b`. Each IC's ground truth includes pins,
-dependencies, timing and spec rows, and every entry carries a page number and a verbatim quote. Spec rows are tagged
-ELECTRICAL / ABS_MAX / RECOMMENDED / THERMAL / ESD.
-
-Best complete run: all 8 ICs, before column tagging (`benchmark_results/pdg_fidelity/nvidia_nemotron-3-ultra-550b-a55b/`).
-
-| IC | GT score | Pin P/R | Role acc | Dep P/R | Elec. spec recall | Value acc | AbsMax/Rec leak | Timing recall | Provenance score |
-|---|---|---|---|---|---|---|---|---|---|
-| INA128 | 88.6 | 1.00/0.88 | 1.00 | 0.60/0.86 | 0.93 | 0.72 | 0.00 | 1.00 | 87.0 |
-| LM317 | 89.6 | 1.00/1.00 | 1.00 | 0.67/1.00 | 0.95 | 0.91 | 0.00 | – | 83.9 |
-| LM358 | 94.8 | 1.00/1.00 | 1.00 | 1.00/1.00 | 0.98 | 0.68 | 0.00 | 1.00 | 85.4 |
-| LM386 | 92.8 | 1.00/0.88 | 1.00 | 0.58/0.88 | 1.00 | 0.91 | 0.00 | 1.00 | 90.7 |
-| LM393 | 96.1 | 1.00/1.00 | 1.00 | 1.00/1.00 | 0.94 | 0.82 | 0.00 | 1.00 | 86.5 |
-| NE555 | 94.3 | 1.00/1.00 | 1.00 | 1.00/0.77 | 1.00 | 0.75 | 0.00 | 1.00 | 84.1 |
-| OPA2134 | 96.8 | 1.00/1.00 | 1.00 | 1.00/1.00 | 0.92 | 0.89 | 0.00 | 1.00 | 84.2 |
-| TL431 | 87.4 | 1.00/1.00 | 1.00 | 0.67/1.00 | 1.00 | 0.69 | 0.00 | – | 85.0 |
-| **Mean** | **92.5** | | | | | | | | |
-
-**Column-tagging run (latest).** Spec pages are rebuilt from word coordinates, and every number is tagged
-`{MIN}/{TYP}/{MAX}` according to the column it sits under. In this run:
-
-- Value accuracy improved on LM358 (0.68 → 0.96), INA128 (0.72 → 0.87) and NE555 (0.75 → 0.87).
-- LM358 rose to 98.5 and LM393 to 98.2.
-- The run is **not complete**. OPA2134 and TL431 failed with NIM HTTP 429 (rate limit). NE555 electrical-spec recall
-  fell to 0.19, which still needs investigation.
-- `SUMMARY.md` in that folder holds this latest, partial run. The per-IC JSON files for OPA2134 and TL431 are
-  still from the earlier run.
-
-**Model comparison** (same pipeline, mean GT score): `nvidia/nemotron-3-ultra-550b-a55b` scored **92.5**;
-`deepseek-ai/deepseek-v4.1-flash` scored 82.0 on 7 ICs, with LM386 failing on 429.
-
-### NVIDIA NIM latency (tools/nim_latency_bench.py)
-
-Latency was measured with streaming, 2 runs per model; the values below are medians.
-
-| Model | Small prompt, thinking ON (total s) | Small prompt, thinking OFF (total s) | Full spec-page prompt ~60k chars, thinking OFF (total s) | Notes |
-|---|---|---|---|---|
-| nvidia/nemotron-3-ultra-550b-a55b | 26.0 | 3–52 (high variance) | 156 (JSON truncated) | **default**: best accuracy; TTFT 0.5–4 s |
-| deepseek-ai/deepseek-v4.1-flash | 48.9 | 8.4 | 127 | fallback 1, TTFT 17–44 s when thinking is on |
-| z-ai/glm-5.3-flash | 34.5 | 85.9 | timeout (>300 s) | fallback 2 |
-| z-ai/glm-5.3 | 103.6 | 93.7 | – | too slow |
-| nvidia/nemotron-3.5-lightning-30b-a3b | 20.1 (invalid JSON) | 7.1 | 166 (JSON truncated) | fast but less accurate |
-| openai/gpt-oss-20b, google/gemma-4-31b-it, stepfun-ai/step-5-preview | 78–180+ / timeout | – | timeout | not usable |
-| moonshotai/kimi-k2.6, nemotron-3-super-120b, mistral-large-2 | listed in /v1/models, but return **404** for this key | | | |
-
-Findings from these measurements:
-
-- A single "extract all spec tables" call takes 2–3 minutes on NIM and its output is often truncated.
-- The HKG builder therefore extracts **one spec page per call**, running 6 calls in parallel. One IC now takes
-  25–100 s in total.
-- Reasoning ("thinking") is disabled by default (`chat_template_kwargs`), because on NIM it adds 5–30× latency.
-- The client enforces a time-to-first-token limit (90 s) and a total limit (240 s), and falls back to the next
-  model when they are exceeded.
-- The main remaining risk is rate limiting (HTTP 429) under parallel load.
-
-Raw data: `benchmark_results/NIM_LATENCY_BENCH*.json`.
+레거시 패키지 `agent_engine/`과 `analog_verifier/`는 정리가 필요합니다. `agent_engine/ltspice_runner.py`만 현재 코드에서 사용합니다.
 
 ---
 
-## 🔍 Telemetry & Step-by-Step Tracing
-
-Every execution run records detailed telemetry across all 6 phases:
-* **Millisecond Precision Timings**: Tracks latency breakdown across LLM completion, PDF layout segmentation, graph scheduling, and SPICE transient runs.
-* **Input / Output Data Contracts**: Records exact input prompts, intermediate ASTs, and generated SPICE netlists.
-* **Diagnostic Remediation Hints**: Automatically surfaces actionable recommendations when an analog constraint or compiler error occurs.
-* **Interactive Trace Exporter**: Produces `{safe_ic_name}_TRACE_INSPECTOR.html` for offline or web-based interactive step inspection.
-
----
-
-## 📚 References & Citations
-
-1. **AnalogVerifier**: *AnalogVerifier: A Neuro-Symbolic Framework for Analog Circuit Verification* (Liu et al., 2024).
-2. **Docs2KG**: *Unified Knowledge Graph Construction from Heterogeneous Unstructured Documents* (arXiv:2406.01234).
-3. **Hardware Knowledge Graphs**: *Faithful Construction of Hierarchical Hardware Knowledge Graphs* (arXiv:2410.xxxxx).
-4. **SymPy**: *SymPy: Symbolic computing in Python* (Meurer et al., PeerJ Comput. Sci., 2017).
-5. **LTspice**: *Linear Technology / Analog Devices LTspice Simulator*.
+## 📝 남은 과제
+1. **합성 모델 비교 재실행:** 수정한 validator와 프롬프트로 다시 돌려, 첫 번째로 컴파일·수렴하는 LM358 netlist를 확보합니다. 그 결과로 실제 통과율을 기록합니다.
+2. **합성 전략 개선:** 트랜지스터 수준 이전에, 행동 모델(behavioral, 매크로모델 수준)로 먼저 spec을 맞추는 2단계 전략을 검토합니다.
+3. **fixture 확장:** LM386(오디오 앰프)과 INA128(계측 앰프) fixture를 완성합니다(현재 일부만 구현).
+4. **저장소 정리:** git-ignored인데 추적 중인 산출물 170개(`*.raw`, `*.db`, `*.log`)와 레거시 패키지를 정리하고 단위 테스트를 추가합니다.

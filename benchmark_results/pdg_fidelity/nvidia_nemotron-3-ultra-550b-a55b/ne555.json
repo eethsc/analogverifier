@@ -1,71 +1,77 @@
 {
   "ic": "ne555",
   "model": "nvidia/nemotron-3-ultra-550b-a55b",
-  "llm_seconds": 90.5,
+  "llm_seconds": 86.2,
   "llm_calls": [
     {
-      "ts": 1792565574.9581618,
+      "ts": 1792585929.8107333,
       "tag": "hkg_specs_p4",
       "provider": "nim",
       "model": "nvidia/nemotron-3-ultra-550b-a55b",
       "attempt": 1,
       "status": "ok",
-      "ttft_s": 16.96,
-      "total_s": 16.96,
-      "completion_tokens": 1136,
+      "ttft_s": 18.7,
+      "total_s": 18.7,
+      "completion_tokens": 1084,
       "prompt_tokens": null,
       "finish_reason": "stop"
     },
     {
-      "ts": 1792565575.1890638,
+      "ts": 1792585931.4216118,
       "tag": "hkg_pins",
       "provider": "nim",
       "model": "nvidia/nemotron-3-ultra-550b-a55b",
       "attempt": 1,
       "status": "ok",
-      "ttft_s": 17.19,
-      "total_s": 17.19,
-      "completion_tokens": 1537,
+      "ttft_s": 20.82,
+      "total_s": 20.82,
+      "completion_tokens": 1489,
       "prompt_tokens": null,
       "finish_reason": "stop"
     },
     {
-      "ts": 1792565603.031359,
+      "ts": 1792585957.3761895,
       "tag": "hkg_specs_p7",
       "provider": "nim",
       "model": "nvidia/nemotron-3-ultra-550b-a55b",
       "attempt": 1,
       "status": "ok",
-      "ttft_s": 44.93,
-      "total_s": 44.93,
-      "completion_tokens": 1029,
+      "ttft_s": 27.56,
+      "total_s": 27.56,
+      "completion_tokens": 987,
       "prompt_tokens": null,
       "finish_reason": "stop"
     },
     {
-      "ts": 1792565648.520865,
+      "ts": 1792585985.9097948,
       "tag": "hkg_specs_p6",
       "provider": "nim",
       "model": "nvidia/nemotron-3-ultra-550b-a55b",
       "attempt": 1,
-      "status": "timeout",
-      "total_s": 90.44,
-      "error": "TimeoutError: The read operation timed out"
+      "status": "ok",
+      "ttft_s": 73.74,
+      "total_s": 73.82,
+      "completion_tokens": 2812,
+      "prompt_tokens": null,
+      "finish_reason": "stop"
     },
     {
-      "ts": 1792565648.520865,
+      "ts": 1792585996.8222294,
       "tag": "hkg_specs_p5",
       "provider": "nim",
       "model": "nvidia/nemotron-3-ultra-550b-a55b",
       "attempt": 1,
-      "status": "timeout",
-      "total_s": 90.49,
-      "error": "TimeoutError: The read operation timed out"
+      "status": "ok",
+      "ttft_s": 85.23,
+      "total_s": 85.23,
+      "completion_tokens": 3839,
+      "prompt_tokens": null,
+      "finish_reason": "length"
     }
   ],
   "groundtruth_comparison": {
     "ic": "NE555",
-    "score": 79.8,
+    "score": 96.3,
     "pins": {
       "precision": 1.0,
       "recall": 1.0,
@@ -115,19 +121,19 @@
       "violations": []
     },
     "spec_rows": {
-      "precision": 0.643,
-      "recall": 0.36,
-      "f1": 0.462,
-      "tp": 18,
-      "pred": 28,
+      "precision": 0.407,
+      "recall": 0.96,
+      "f1": 0.571,
+      "tp": 48,
+      "pred": 118,
       "gt": 50
     },
-    "electrical_spec_recall": 0.188,
-    "spec_value_accuracy": 0.87,
+    "electrical_spec_recall": 0.938,
+    "spec_value_accuracy": 0.963,
     "spec_category_accuracy": 1.0,
     "category_confusion": {
       "ELECTRICAL": {
-        "ELECTRICAL": 6
+        "ELECTRICAL": 30
       },
       "ABS_MAX": {
         "ABS_MAX": 7
@@ -137,6 +143,9 @@
       },
       "RECOMMENDED": {
         "RECOMMENDED": 3
+      },
+      "THERMAL": {
+        "THERMAL": 6
       }
     },
     "nonelectrical_leak_rate": 0.0,
@@ -164,7 +173,7 @@
   },
   "provenance_audit": {
     "mode": "groundtruth_free_provenance",
-    "fidelity_score_pct": 84.1,
+    "fidelity_score_pct": 83.9,
     "status": "ACCEPTABLE",
     "pin_provenance": {
       "pins": 8,
@@ -173,20 +182,53 @@
       "ungrounded": []
     },
     "spec_provenance": {
-      "specs": 28,
-      "grounded": 27,
-      "grounded_pct": 96.4,
+      "specs": 118,
+      "grounded": 113,
+      "grounded_pct": 95.8,
       "by_category": {
         "ABS_MAX": 7,
         "ESD": 2,
         "RECOMMENDED": 7,
-        "ELECTRICAL": 12
+        "THERMAL": 36,
+        "ELECTRICAL": 66
       },
       "ungrounded_examples": [
         {
           "symbol": "VI",
           "category": "ABS_MAX",
           "page": 4,
+          "numbers_on_page": false,
+          "evidence_overlap": 1.0,
+          "grounded": false
+        },
+        {
+          "symbol": "R\u03b8JC(bot)",
+          "category": "THERMAL",
+          "page": 5,
+          "numbers_on_page": false,
+          "evidence_overlap": 1.0,
+          "grounded": false
+        },
+        {
+          "symbol": "R\u03b8JC(bot)",
+          "category": "THERMAL",
+          "page": 5,
+          "numbers_on_page": false,
+          "evidence_overlap": 1.0,
+          "grounded": false
+        },
+        {
+          "symbol": "R\u03b8JC(bot)",
+          "category": "THERMAL",
+          "page": 5,
+          "numbers_on_page": false,
+          "evidence_overlap": 1.0,
+          "grounded": false
+        },
+        {
+          "symbol": "R\u03b8JC(bot)",
+          "category": "THERMAL",
+          "page": 5,
           "numbers_on_page": false,
           "evidence_overlap": 1.0,
           "grounded": false
@@ -292,7 +334,7 @@
         "from": "CONT",
         "to": "OUT",
         "delay_us": 50.0,
-        "type": "BIAS_FEED",
+        "type": "REFERENCE",
         "origin": "datasheet",
         "delay_source": null,
         "condition": "Controls comparator thresholds for TRIG and THRES"
@@ -301,10 +343,10 @@
         "from": "CONT",
         "to": "DISCH",
         "delay_us": 50.0,
-        "type": "BIAS_FEED",
+        "type": "REFERENCE",
         "origin": "datasheet",
         "delay_source": null,
-        "condition": "Controls comparator thresholds affecting discharge timing"
+        "condition": "Controls comparator thresholds affecting discharge"
       },
       {
         "from": "CONT",

@@ -17,6 +17,20 @@ from ..pdf_to_graph import PDGVisualizer
 
 logger = logging.getLogger("StudioServer")
 
+ALLOWED_PDF_ROOTS = [os.path.abspath(p) for p in ("testcases", "uploads")]
+
+
+def safe_pdf_path(pdf_path: str) -> Optional[str]:
+    """Returns the absolute path only if it resolves inside testcases/ or uploads/ (prevents arbitrary file reads)."""
+    if not pdf_path:
+        return None
+    real = os.path.abspath(os.path.realpath(pdf_path))
+    for root in ALLOWED_PDF_ROOTS:
+        root_real = os.path.abspath(os.path.realpath(root))
+        if os.path.commonpath([real, root_real]) == root_real and real.lower().endswith(".pdf") and os.path.isfile(real):
+            return real
+    return None
+
 # In-memory registry of asynchronous design generation tasks
 TASKS = {}
 TASKS_LOCK = threading.RLock()
@@ -33,6 +47,13 @@ class StudioRequestHandler(SimpleHTTPRequestHandler):
             self.serve_studio_html()
         elif path == "/api/samples":
             self.serve_samples_api()
+        elif path == "/api/llm_config":
+            from ..llm_client import LLMClient, spent_usd
+            c = LLMClient()
+            self.send_json({"provider": c.provider, "model": c.default_model, "fallback_models": c.fallback_models,
+                            "extract_model": os.environ.get("LLM_EXTRACT_MODEL") or c.default_model,
+                            "synth_model": os.environ.get("LLM_SYNTH_MODEL") or c.default_model,
+                            "spent_usd": round(spent_usd(), 4)})
         elif path == "/api/status":
             task_id = query.get("task_id", [""])[0]
             self.serve_status_api(task_id)
@@ -123,9 +144,11 @@ class StudioRequestHandler(SimpleHTTPRequestHandler):
 
     def handle_extract_pdg_api(self, pdf_path: str):
         """Extracts and visualizes the Port Dependency Graph directly from a datasheet PDF."""
-        if not pdf_path or not os.path.exists(pdf_path):
-            self.send_json({"error": f"Datasheet PDF not found at: {pdf_path}"}, status=400)
+        safe = safe_pdf_path(pdf_path)
+        if not safe:
+            self.send_json({"error": f"Datasheet PDF not found, or outside testcases/ and uploads/: {pdf_path}"}, status=400)
             return
+        pdf_path = safe
 
         try:
             res = PDGVisualizer.extract_from_pdf(pdf_path)
@@ -225,6 +248,11 @@ class StudioRequestHandler(SimpleHTTPRequestHandler):
             if not pdf_path and not user_prompt:
                 self.send_json({"error": "Either a PDF datasheet or a natural language prompt is required."}, status=400)
                 return
+            if pdf_path:
+                pdf_path = safe_pdf_path(pdf_path)
+                if not pdf_path:
+                    self.send_json({"error": "pdf_path must point to a PDF inside testcases/ or uploads/."}, status=400)
+                    return
 
             task_id = f"task_{int(time.time())}_{uuid.uuid4().hex[:6]}"
             output_dir = os.path.abspath(os.path.join("output_interactive", task_id))
@@ -580,8 +608,8 @@ class StudioRequestHandler(SimpleHTTPRequestHandler):
             </div>
             <div>
               <label class="block text-slate-400 font-semibold mb-1">Synthesis Model:</label>
-              <div class="bg-slate-900 border border-[var(--border)] text-sky-400 font-mono rounded-xl px-3 py-2 truncate">
-                gemini-2.5-flash
+              <div id="llmModelLabel" class="bg-slate-900 border border-[var(--border)] text-sky-400 font-mono rounded-xl px-3 py-2 truncate" title="">
+                loading...
               </div>
             </div>
           </div>
@@ -714,6 +742,11 @@ class StudioRequestHandler(SimpleHTTPRequestHandler):
 
     function init() {
       loadSamples();
+      fetch('/api/llm_config').then(r => r.json()).then(c => {
+        const el = document.getElementById('llmModelLabel');
+        el.textContent = `${c.provider}: ${c.synth_model}`;
+        el.title = `extract: ${c.extract_model} | synth: ${c.synth_model} | fallback: ${(c.fallback_models || []).join(', ')}`;
+      }).catch(() => {});
     }
 
     async function loadSamples() {

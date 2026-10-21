@@ -21,7 +21,8 @@ class AICircuitArchitect:
         pdg_schedule: Dict[str, float],
         iteration: int = 1,
         prior_feedback: Optional[str] = None,
-        user_prompt: Optional[str] = None
+        user_prompt: Optional[str] = None,
+        measurement_plan: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         Uses OpenRouter LLM to design and synthesize complete SPICE netlist from datasheet specifications.
@@ -44,6 +45,16 @@ class AICircuitArchitect:
             for p, t in pdg_schedule.items()
         ])
 
+        measurement_section = ""
+        if measurement_plan:
+            from ..neuro_symbolic_verifier.spec_planner import fixture_brief
+            measurement_section = f"""
+## HOW THIS CIRCUIT WILL BE MEASURED (DUT is instantiated with V- = ground, V+ = VS; mid-supply node exists)
+{fixture_brief(measurement_plan)}
+The subcircuit must therefore work with its negative supply pin tied to 0 V (single supply) unless the notes say
+otherwise, must not reference the external node '0' internally except through its supply pins, and must not
+contain any analysis directives.
+"""
         user_prompt_section = ""
         if user_prompt:
             user_prompt_section = f"""
@@ -75,6 +86,7 @@ Your task is to synthesize from scratch a complete, highly realistic, physically
 
 ## PORT DEPENDENCY SCHEDULE (PHYSICAL STARTUP SEQUENCE):
 {schedule_summary}
+{measurement_section}
 {user_prompt_section}
 {feedback_section}
 
@@ -120,6 +132,15 @@ Your task is to synthesize from scratch a complete, highly realistic, physically
    - All arithmetic expressions on component values MUST be wrapped in curly braces: e.g. {{2n/1k}}.
 5. End the subcircuit with `.ends {subckt_name}`.
 6. All node names must be valid SPICE identifiers (alphanumeric and underscores, no spaces).
+7. HARD STRUCTURE RULES (violations make LTspice reject the whole file):
+   - NEVER nest `.subckt` blocks. Define helper subcircuits FIRST at top level, then `.subckt {subckt_name}` LAST.
+   - Line continuation is a leading `+` on the next line. NEVER end a line with `\\`.
+   - NEVER write prose, ellipses or "repeat N times" inside the netlist. Write every device explicitly, or use `M=` / `m=` multiplicity.
+   - Behavioral sources: `B... n+ n- V={{expr}}` or `E... n+ n- VALUE={{expr}}` (exactly two nodes before V=/VALUE=).
+     Do NOT use `freq`, `TEMP`, `temp_nom` or other undefined names inside expressions; use `.param` for every constant.
+   - Every `.param` you reference must be defined in the same file. Subcircuit parameters must be written as `PARAMS: a=1 b=2` on the `.subckt` line.
+   - Noise sources, temperature coefficients and drift models are NOT needed: omit them.
+   - The design must reach a DC operating point with V- = 0 V and V+ = the test supply, all inputs at mid-supply.
 
 OUTPUT FORMAT:
 Respond using the following XML tags:
@@ -136,7 +157,7 @@ Detailed technical explanation of the chosen topology and component sizing metho
 """
         system_prompt = "You are an autonomous AI Analog Circuit Architect. Synthesize production-quality, convergent SPICE netlists that strictly satisfy all datasheet requirements."
 
-        raw_resp = self.llm.complete(prompt, system_prompt=system_prompt, temperature=0.1, max_tokens=8192)
+        raw_resp = self.llm.complete(prompt, system_prompt=system_prompt, temperature=0.1, max_tokens=8192, tag="synth")
 
         # Parse XML tags
         arch_summary = ""

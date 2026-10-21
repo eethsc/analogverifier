@@ -2,8 +2,8 @@
   "ic_device": {
     "name": "LM386",
     "category": "Audio Power Amplifier",
-    "description": "Low voltage audio power amplifier with internally set gain of 20, adjustable to 200 with external components. Ground-referenced input, self-centering output quiescent voltage at half supply.",
-    "package": "8-Pin SOIC (D)"
+    "description": "Low voltage audio power amplifier with internally set gain of 20, adjustable from 20 to 200 via external components between pins 1 and 8. Operates from 4V-12V or 5V-18V supply with low quiescent current drain of 4mA.",
+    "package": "SOIC-8 (D Package)"
   },
   "pins": [
     {
@@ -11,7 +11,7 @@
       "pin_number": "1,8",
       "role": "FEEDBACK",
       "direction": "BIDIRECTIONAL",
-      "description": "Gain setting pins. Internal 1.35 k\u03a9 resistor between pins 1 and 8 sets default gain to 20. External resistor and capacitor between pins 1 and 8 increases gain up to 200.",
+      "description": "Gain setting pins. Internal 1.35k\u03a9 resistor sets gain to 20. External resistor and capacitor between pins 1 and 8 increases gain up to 200.",
       "page": 3,
       "evidence": "Gain setting pin"
     },
@@ -20,7 +20,7 @@
       "pin_number": "2",
       "role": "SIGNAL",
       "direction": "INPUT",
-      "description": "Inverting input. Ground-referenced input.",
+      "description": "Inverting input",
       "page": 3,
       "evidence": "Inverting input"
     },
@@ -29,7 +29,7 @@
       "pin_number": "3",
       "role": "SIGNAL",
       "direction": "INPUT",
-      "description": "Noninverting input. Ground-referenced input.",
+      "description": "Noninverting input",
       "page": 3,
       "evidence": "Noninverting input"
     },
@@ -38,7 +38,7 @@
       "pin_number": "4",
       "role": "GROUND",
       "direction": "GROUND",
-      "description": "Ground reference pin.",
+      "description": "Ground reference",
       "page": 3,
       "evidence": "Ground reference"
     },
@@ -47,7 +47,7 @@
       "pin_number": "5",
       "role": "OUTPUT",
       "direction": "OUTPUT",
-      "description": "Output pin. Automatically biases to one-half the supply voltage.",
+      "description": "Output",
       "page": 3,
       "evidence": "Output"
     },
@@ -56,7 +56,7 @@
       "pin_number": "6",
       "role": "POWER",
       "direction": "POWER",
-      "description": "Power supply voltage pin. Wide supply voltage range: 4 V\u201312 V or 5 V\u201318 V.",
+      "description": "Power supply voltage",
       "page": 3,
       "evidence": "Power supply voltage"
     },
@@ -65,7 +65,7 @@
       "pin_number": "7",
       "role": "BIAS",
       "direction": "OUTPUT",
-      "description": "Bypass decoupling path pin. Provides access to internal bias circuitry for decoupling.",
+      "description": "Bypass decoupling path",
       "page": 3,
       "evidence": "Bypass decoupling path"
     }
@@ -76,14 +76,14 @@
       "target": "VOUT",
       "dependency_type": "POWER_FEED",
       "settling_delay_us": null,
-      "condition": "Supply voltage 4V-18V"
+      "condition": "Supply voltage 4V-12V or 5V-18V"
     },
     {
       "source": "GND",
       "target": "VOUT",
       "dependency_type": "POWER_FEED",
       "settling_delay_us": null,
-      "condition": "Ground reference"
+      "condition": "Ground reference for output stage"
     },
     {
       "source": "+INPUT",
@@ -104,7 +104,7 @@
       "target": "VOUT",
       "dependency_type": "FEEDBACK_LOOP",
       "settling_delay_us": null,
-      "condition": "Gain setting via pins 1 and 8 (internal 1.35k\u03a9 sets gain=20; external RC increases gain to 200)"
+      "condition": "Gain setting via pins 1 and 8 (internal 1.35k\u03a9 sets gain=20, external RC adjusts 20-200)"
     },
     {
       "source": "BYPASS",
@@ -118,7 +118,7 @@
     {
       "name": "Gain Circuitry",
       "type": "AMPLIFIER",
-      "description": "Internal gain setting circuitry with 1.35 k\u03a9 resistor setting default gain to 20. External components between pins 1 and 8 can increase gain to 200.",
+      "description": "Internal gain setting resistor (1.35k\u03a9) sets default gain to 20. External components between pins 1 and 8 modify gain from 20 to 200.",
       "input_ports": [
         "+INPUT",
         "-INPUT",
@@ -131,7 +131,7 @@
     {
       "name": "Bias Circuitry",
       "type": "BIAS",
-      "description": "Internal bias circuitry that sets output quiescent voltage to half supply. Bypass pin provides decoupling path.",
+      "description": "Provides internal biasing. Output automatically biases to one-half supply voltage. Bypass pin provides decoupling path.",
       "input_ports": [
         "VS",
         "GND",
@@ -144,8 +144,11 @@
     {
       "name": "Output Stage",
       "type": "OUTPUT_DRIVER",
-      "description": "Output driver capable of driving loads from 4 \u03a9 to 32 \u03a9. Output automatically biases to half supply voltage.",
+      "description": "Drives loads from 4\u03a9 to 32\u03a9. Ground-referenced input with self-centering output quiescent voltage at VS/2.",
       "input_ports": [
+        "+INPUT",
+        "-INPUT",
+        "GAIN",
         "VS",
         "GND"
       ],
@@ -254,27 +257,27 @@
       "related_pins": []
     },
     {
-      "symbol": "VESD_HBM",
-      "name": "Human-body model (HBM)",
+      "symbol": "V(ESD)",
+      "name": "Electrostatic discharge",
       "category": "ESD",
       "min": null,
       "typ": null,
       "max": 1000,
       "unit": "V",
-      "test_conditions": "per ANSI/ESDA/JEDEC JS-001",
+      "test_conditions": "Human-body model (HBM), per ANSI/ESDA/JEDEC JS-001",
       "page": 4,
       "evidence": "Human-body model (HBM) | \u00b11000{MAX}",
       "related_pins": []
     },
     {
-      "symbol": "VESD_CDM",
-      "name": "Charged-device model (CDM)",
+      "symbol": "V(ESD)",
+      "name": "Electrostatic discharge",
       "category": "ESD",
       "min": null,
       "typ": null,
       "max": 1000,
       "unit": "V",
-      "test_conditions": "per JEDEC specification JESD22-C101",
+      "test_conditions": "Charged-device model (CDM), per JEDEC specification JESD22-C101",
       "page": 4,
       "evidence": "Charged-device model (CDM) | \u00b11000{MAX}",
       "related_pins": []
@@ -648,7 +651,7 @@
       "unit": "dB",
       "test_conditions": "VS = 6 V, f = 1 kHz, Pins 1 and 8 Open",
       "page": 5,
-      "evidence": "VS = 6 V, f = 1 kHz | 26{TYP} | dB",
+      "evidence": "VS = 6 V, f = 1 kHz | 26{TYP}",
       "related_pins": [
         "IN",
         "OUT"

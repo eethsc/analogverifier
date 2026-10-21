@@ -1,103 +1,103 @@
 {
   "ic": "ina128",
   "model": "nvidia/nemotron-3-ultra-550b-a55b",
-  "llm_seconds": 74.3,
+  "llm_seconds": 165.4,
   "llm_calls": [
     {
-      "ts": 1792565357.9389026,
-      "tag": "hkg_specs_p20",
-      "provider": "nim",
-      "model": "nvidia/nemotron-3-ultra-550b-a55b",
-      "attempt": 1,
-      "status": "ok",
-      "ttft_s": 1.56,
-      "total_s": 1.56,
-      "completion_tokens": 7,
-      "prompt_tokens": null,
-      "finish_reason": "stop"
-    },
-    {
-      "ts": 1792565369.3115423,
-      "tag": "hkg_pins",
-      "provider": "nim",
-      "model": "nvidia/nemotron-3-ultra-550b-a55b",
-      "attempt": 1,
-      "status": "ok",
-      "ttft_s": 13.06,
-      "total_s": 13.07,
-      "completion_tokens": 1069,
-      "prompt_tokens": null,
-      "finish_reason": "stop"
-    },
-    {
-      "ts": 1792565371.23403,
+      "ts": 1792585610.970219,
       "tag": "hkg_specs_p4",
       "provider": "nim",
       "model": "nvidia/nemotron-3-ultra-550b-a55b",
       "attempt": 1,
       "status": "ok",
-      "ttft_s": 14.99,
-      "total_s": 14.99,
-      "completion_tokens": 949,
+      "ttft_s": 12.8,
+      "total_s": 12.8,
+      "completion_tokens": 945,
       "prompt_tokens": null,
       "finish_reason": "stop"
     },
     {
-      "ts": 1792565382.3016212,
-      "tag": "hkg_specs_p8",
+      "ts": 1792585612.094479,
+      "tag": "hkg_pins",
       "provider": "nim",
       "model": "nvidia/nemotron-3-ultra-550b-a55b",
       "attempt": 1,
       "status": "ok",
-      "ttft_s": 25.92,
-      "total_s": 25.93,
-      "completion_tokens": 1237,
+      "ttft_s": 24.33,
+      "total_s": 24.33,
+      "completion_tokens": 1155,
       "prompt_tokens": null,
       "finish_reason": "stop"
     },
     {
-      "ts": 1792565390.0505216,
+      "ts": 1792585670.1612573,
       "tag": "hkg_specs_p6",
       "provider": "nim",
       "model": "nvidia/nemotron-3-ultra-550b-a55b",
       "attempt": 1,
       "status": "ok",
-      "ttft_s": 33.72,
-      "total_s": 33.73,
-      "completion_tokens": 1842,
+      "ttft_s": 58.0,
+      "total_s": 58.01,
+      "completion_tokens": 1891,
       "prompt_tokens": null,
       "finish_reason": "stop"
     },
     {
-      "ts": 1792565399.4307392,
+      "ts": 1792585671.562118,
       "tag": "hkg_specs_p5",
       "provider": "nim",
       "model": "nvidia/nemotron-3-ultra-550b-a55b",
       "attempt": 1,
       "status": "ok",
-      "ttft_s": 43.17,
-      "total_s": 43.17,
-      "completion_tokens": 3304,
+      "ttft_s": 60.57,
+      "total_s": 60.59,
+      "completion_tokens": 3331,
       "prompt_tokens": null,
       "finish_reason": "length"
     },
     {
-      "ts": 1792565430.510432,
+      "ts": 1792585671.643685,
+      "tag": "hkg_specs_p20",
+      "provider": "nim",
+      "model": "nvidia/nemotron-3-ultra-550b-a55b",
+      "attempt": 1,
+      "status": "ok",
+      "ttft_s": 1.42,
+      "total_s": 1.44,
+      "completion_tokens": 7,
+      "prompt_tokens": null,
+      "finish_reason": "stop"
+    },
+    {
+      "ts": 1792585711.7966259,
       "tag": "hkg_specs_p7",
       "provider": "nim",
       "model": "nvidia/nemotron-3-ultra-550b-a55b",
       "attempt": 1,
       "status": "ok",
-      "ttft_s": 74.13,
-      "total_s": 74.17,
-      "completion_tokens": 3067,
+      "ttft_s": 80.43,
+      "total_s": 80.43,
+      "completion_tokens": 3549,
+      "prompt_tokens": null,
+      "finish_reason": "length"
+    },
+    {
+      "ts": 1792585745.8074825,
+      "tag": "hkg_specs_p8",
+      "provider": "nim",
+      "model": "nvidia/nemotron-3-ultra-550b-a55b",
+      "attempt": 1,
+      "status": "ok",
+      "ttft_s": 86.4,
+      "total_s": 86.4,
+      "completion_tokens": 1256,
       "prompt_tokens": null,
       "finish_reason": "stop"
     }
   ],
   "groundtruth_comparison": {
     "ic": "INA128",
-    "score": 88.5,
+    "score": 89.6,
     "pins": {
       "precision": 1.0,
       "recall": 0.875,
@@ -158,15 +158,15 @@
       "violations": []
     },
     "spec_rows": {
-      "precision": 0.545,
-      "recall": 0.88,
-      "f1": 0.673,
-      "tp": 66,
-      "pred": 121,
+      "precision": 0.558,
+      "recall": 0.893,
+      "f1": 0.687,
+      "tp": 67,
+      "pred": 120,
       "gt": 75
     },
-    "electrical_spec_recall": 0.836,
-    "spec_value_accuracy": 0.871,
+    "electrical_spec_recall": 0.855,
+    "spec_value_accuracy": 0.918,
     "spec_category_accuracy": 1.0,
     "category_confusion": {
       "ABS_MAX": {
@@ -182,7 +182,7 @@
         "THERMAL": 6
       },
       "ELECTRICAL": {
-        "ELECTRICAL": 46
+        "ELECTRICAL": 47
       }
     },
     "nonelectrical_leak_rate": 0.0,
@@ -246,7 +246,7 @@
   },
   "provenance_audit": {
     "mode": "groundtruth_free_provenance",
-    "fidelity_score_pct": 87.5,
+    "fidelity_score_pct": 86.9,
     "status": "TRUSTWORTHY",
     "pin_provenance": {
       "pins": 7,
@@ -255,19 +255,19 @@
       "ungrounded": []
     },
     "spec_provenance": {
-      "specs": 121,
-      "grounded": 116,
-      "grounded_pct": 95.9,
+      "specs": 120,
+      "grounded": 112,
+      "grounded_pct": 93.3,
       "by_category": {
         "ABS_MAX": 8,
         "ESD": 2,
         "RECOMMENDED": 4,
         "THERMAL": 10,
-        "ELECTRICAL": 97
+        "ELECTRICAL": 96
       },
       "ungrounded_examples": [
         {
-          "symbol": "IO",
+          "symbol": "IOUT",
           "category": "ABS_MAX",
           "page": 4,
           "numbers_on_page": false,
@@ -283,11 +283,19 @@
           "grounded": false
         },
         {
-          "symbol": "Zicm",
+          "symbol": "VCM",
           "category": "ELECTRICAL",
           "page": 5,
           "numbers_on_page": false,
           "evidence_overlap": 0.0,
+          "grounded": false
+        },
+        {
+          "symbol": "G",
+          "category": "ELECTRICAL",
+          "page": 7,
+          "numbers_on_page": false,
+          "evidence_overlap": 1.0,
           "grounded": false
         },
         {
@@ -304,6 +312,22 @@
           "page": 7,
           "numbers_on_page": false,
           "evidence_overlap": 1.0,
+          "grounded": false
+        },
+        {
+          "symbol": "ISC",
+          "category": "ELECTRICAL",
+          "page": 7,
+          "numbers_on_page": false,
+          "evidence_overlap": 1.0,
+          "grounded": false
+        },
+        {
+          "symbol": "ISC",
+          "category": "ELECTRICAL",
+          "page": 7,
+          "numbers_on_page": false,
+          "evidence_overlap": 0.0,
           "grounded": false
         }
       ]
@@ -342,7 +366,7 @@
         "type": "FEEDBACK_LOOP",
         "origin": "datasheet",
         "delay_source": "tS",
-        "condition": "Gain resistor placed between pin 1 and pin 8 for G > 1"
+        "condition": "Gain resistor between pins 1 and 8 sets gain from 1 to 10,000"
       },
       {
         "from": "VIN_N",
@@ -351,7 +375,7 @@
         "type": "SIGNAL_PATH",
         "origin": "datasheet",
         "delay_source": "tS",
-        "condition": "Normal operation"
+        "condition": "Negative differential input signal"
       },
       {
         "from": "VIN_N",
@@ -369,7 +393,7 @@
         "type": "SIGNAL_PATH",
         "origin": "datasheet",
         "delay_source": "tS",
-        "condition": "Normal operation"
+        "condition": "Positive differential input signal"
       },
       {
         "from": "VIN_P",
@@ -387,7 +411,7 @@
         "type": "POWER_FEED",
         "origin": "datasheet",
         "delay_source": "tS",
-        "condition": "Supply voltage > 4.5V (\u00b12.25V)"
+        "condition": "Negative supply must be within \u00b12.25V to \u00b118V"
       },
       {
         "from": "V_N",
@@ -414,7 +438,7 @@
         "type": "FEEDBACK_LOOP",
         "origin": "datasheet",
         "delay_source": "tS",
-        "condition": "Reference input driven by low impedance"
+        "condition": "Reference input must be driven by low impedance or connected to ground"
       },
       {
         "from": "REF",
@@ -441,7 +465,7 @@
         "type": "POWER_FEED",
         "origin": "datasheet",
         "delay_source": "tS",
-        "condition": "Supply voltage > 4.5V (\u00b12.25V)"
+        "condition": "Positive supply must be within \u00b12.25V to \u00b118V"
       },
       {
         "from": "V_P",

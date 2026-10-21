@@ -163,6 +163,15 @@ class HardwareKnowledgeGraphBuilder:
         pins["electrical_parameters"] = specs.get("electrical_parameters", [])
         return pins
 
+    @staticmethod
+    def _unsanitize(pname: str) -> str:
+        s = str(pname)
+        if s.endswith("_P"):
+            return s[:-2] + "+"
+        if s.endswith("_N"):
+            return s[:-2] + "-"
+        return s
+
     def _json_to_networkx_graph(self, data: Dict[str, Any]) -> nx.MultiDiGraph:
         from .pdf_parser import PDFDatasheetParser
         G = HardwareKnowledgeGraph()
@@ -179,7 +188,9 @@ class HardwareKnowledgeGraphBuilder:
         for idx, pin in enumerate(data.get("pins") or []):
             if not isinstance(pin, dict):
                 continue
-            raw = pin.get("name") or f"PIN_{idx}"
+            raw = pin.get("raw_name") or pin.get("name") or f"PIN_{idx}"
+            if str(raw) == str(pin.get("name")) and re.search(r"_(P|N)$", str(raw)):
+                raw = self._unsanitize(raw)   # cached extraction lost the original spelling ("IN1+" -> "IN1_P")
             pname = PDFDatasheetParser.sanitize_pin_name(raw)
             if pname in merged:
                 merged[pname].setdefault("pin_numbers", [merged[pname].get("pin_number")])

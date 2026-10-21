@@ -1,6 +1,7 @@
 import os
 import re
 import json
+import shutil
 import logging
 from typing import Dict, Any, List, Optional
 
@@ -8,6 +9,7 @@ from .openrouter_client import OpenRouterClient
 from .pdf_to_graph import PDFDatasheetParser, HardwareKnowledgeGraphBuilder, PortDependencyGraphExtractor
 from .circuit_synthesis import AICircuitArchitect, NetlistValidator
 from .neuro_symbolic_verifier import TestbenchSynthesizer, ClosedLoopEvaluator
+from .neuro_symbolic_verifier.verification_flow import plan_for, verify, write_artifacts
 from .visualization import ProcessVisualizer
 from .tracing import ExecutionTracer
 
@@ -32,11 +34,13 @@ class AutonomousAnalogDesignAgent:
         model: Optional[str] = None,
         output_dir: str = "output_design",
         simulator_path: Optional[str] = None,
-        max_iterations: int = 10
+        max_iterations: int = 10,
+        reuse_hkg_path: Optional[str] = None
     ):
         self.output_dir = os.path.abspath(output_dir)
         os.makedirs(self.output_dir, exist_ok=True)
         self.max_iterations = max_iterations
+        self.reuse_hkg_path = reuse_hkg_path
 
         self.llm = OpenRouterClient(api_key=api_key, default_model=model)
         self.pdf_parser = PDFDatasheetParser()
@@ -141,8 +145,16 @@ Return ONLY valid JSON.
             self.pdf_parser.max_pages = max_pages
             parsed_doc = self.pdf_parser.parse_pdf(datasheet_pdf_path)
             
-            logger.info("Constructing Hardware Knowledge Graph (HKG) from parsed document...")
-            hkg = self.kg_builder.build_kg_from_parsed_pdf(parsed_doc)
+            if self.reuse_hkg_path and os.path.exists(self.reuse_hkg_path):
+                logger.info(f"Reusing cached HKG extraction: {self.reuse_hkg_path} (no LLM calls in Phase 1)")
+                with open(self.reuse_hkg_path, "r", encoding="utf-8") as f:
+                    raw_extraction = json.load(f)
+                hkg = self.kg_builder._json_to_networkx_graph(raw_extraction)
+                from .pdf_to_graph.pdf_parser import PDFDatasheetParser
+                hkg.graph["parsed_pages"] = PDFDatasheetParser.audit_pages(parsed_doc)
+            else:
+                logger.info("Constructing Hardware Knowledge Graph (HKG) from parsed document...")
+                hkg = self.kg_builder.build_kg_from_parsed_pdf(parsed_doc)
             raw_extraction = hkg.graph.get("raw_extraction", {})
         elif user_prompt:
             logger.info("Phase 1: No PDF provided; extracting specifications directly from natural language prompt...")
@@ -172,6 +184,12 @@ Return ONLY valid JSON.
         subckt_name = re.sub(r'[^a-zA-Z0-9_]', '_', part_name).upper()
 
         logger.info(f"Target IC: {part_name} | Pins Extracted: {len(pins)} | Specs Extracted: {len(specifications)}")
+
+        # Deterministic measurement plan (computed once; fixtures are rebuilt per iteration for each netlist)
+        self.spec_plan = plan_for(ic_info, pins, specifications)
+        _ps = self.spec_plan["summary"]
+        logger.info(f"  [Measurement Plan] class={self.spec_plan['device_class']} electrical_rows={_ps['electrical_rows']} "
+                    f"planned_fixtures={_ps['planned']} unsupported={_ps['unsupported_kind']} not_testable={_ps['not_testable']}")
 
         # Save KG snapshot
         kg_file = os.path.join(self.output_dir, f"{safe_part_name}_knowledge_graph.json")
@@ -228,6 +246,9 @@ Return ONLY valid JSON.
         final_netlist_path = None
         final_evaluation = None
         total_loop_budget = max_iterations if max_iterations is not None else self.max_iterations
+        best_score = None
+        best_eval = None
+        best_netlist_path = None
 
         for iteration in range(1, total_loop_budget + 1):
             if progress_callback:
@@ -248,7 +269,8 @@ Return ONLY valid JSON.
                 pdg_schedule=pdg_schedule,
                 iteration=iteration,
                 prior_feedback=current_feedback,
-                user_prompt=user_prompt
+                user_prompt=user_prompt,
+                measurement_plan=self.spec_plan
             )
 
             raw_netlist = synth_res.get("spice_netlist", "")
@@ -266,6 +288,8 @@ Return ONLY valid JSON.
             netlist_path = os.path.join(self.output_dir, netlist_filename)
             with open(netlist_path, "w", encoding="utf-8") as f:
                 f.write(cleaned_netlist)
+            with open(netlist_path[:-4] + ".raw.cir", "w", encoding="utf-8") as f:   # untouched LLM output
+                f.write(raw_netlist)
 
             final_netlist_path = netlist_path
             self.tracer.end_span(outputs={
@@ -274,42 +298,73 @@ Return ONLY valid JSON.
                 "netlist_line_count": len(cleaned_netlist.splitlines())
             })
 
-            # 4.1 Synthesize LTspice Testbenches
-            self.tracer.start_span(4, f"Phase 4: Testbench Synthesis (Loop {iteration})", inputs={
-                "netlist": netlist_filename
-            })
-            if progress_callback:
-                progress_callback(4, f"Phase 4: Testbench Generation (Loop {iteration})", "Synthesizing .op, .tran, .ac testbenches aligned with PDG schedule...")
-            logger.info(f"Iteration {iteration}: Synthesizing LTspice testbenches using PDG activation schedule...")
-            testbenches = self.testbench_synthesizer.synthesize_testbenches(
-                netlist_path=netlist_path,
-                subckt_name=subckt_name,
-                pins=pins,
-                specifications=specifications,
-                pdg_schedule=pdg_schedule
-            )
-            tb_names = [tb.get("name", str(tb)) for tb in testbenches] if isinstance(testbenches, list) else list(testbenches.keys())
-            self.tracer.end_span(outputs={
-                "testbench_count": len(testbenches),
-                "testbenches": tb_names
-            })
+            # 4.1/4.2 Deterministic fixtures -> LTspice -> evaluation
+            use_deterministic = os.environ.get("ADA_LEGACY_TESTBENCH") != "1" and self.spec_plan["summary"]["planned"] > 0
+            if use_deterministic:
+                self.tracer.start_span(4, f"Phase 4: Deterministic Testbench Fixtures (Loop {iteration})", inputs={
+                    "netlist": netlist_filename, "fixtures": self.spec_plan["summary"]["distinct_fixtures"]})
+                if progress_callback:
+                    progress_callback(4, f"Phase 4: Deterministic Testbenches (Loop {iteration})",
+                                      f"Building {self.spec_plan['summary']['distinct_fixtures']} LTspice fixtures with fixed .meas names...")
+                logger.info(f"Iteration {iteration}: running deterministic fixtures (no LLM testbench generation)...")
+                eval_res = verify(cleaned_netlist, self.spec_plan,
+                                  {k: v * 1e6 for k, v in pdg_schedule.items()},
+                                  self.output_dir, dut_name=subckt_name, label=f"iter{iteration}")
+                testbenches = []
+                self.tracer.end_span(outputs={"fixtures": len(self.spec_plan["summary"]), "measured": eval_res["coverage_summary"]["measured"],
+                                              "coverage_pct": eval_res["coverage_pct"]})
+                self.tracer.start_span(5, f"Phase 5: LTspice Evaluation (Loop {iteration})", inputs={"measured": eval_res["coverage_summary"]["measured"]})
+                logger.info(f"Iteration {iteration}: coverage {eval_res['coverage_pct']}% "
+                            f"({eval_res['coverage_summary']['measured']}/{eval_res['total_specs']} testable specs measured), "
+                            f"pass {eval_res['pass_rate_percent']}%")
+                self.tracer.end_span(outputs={"pass_rate_percent": eval_res["pass_rate_percent"],
+                                              "coverage_pct": eval_res["coverage_pct"],
+                                              "passed_specs": eval_res["passed_specs"],
+                                              "failed_specs": eval_res["failed_specs"]})
+            else:
+                # legacy path: LLM-written testbenches (used only when no deterministic fixture exists)
+                # 4.1 Synthesize LTspice Testbenches
+                self.tracer.start_span(4, f"Phase 4: Testbench Synthesis (Loop {iteration})", inputs={
+                    "netlist": netlist_filename
+                })
+                if progress_callback:
+                    progress_callback(4, f"Phase 4: Testbench Generation (Loop {iteration})", "Synthesizing .op, .tran, .ac testbenches aligned with PDG schedule...")
+                logger.info(f"Iteration {iteration}: Synthesizing LTspice testbenches using PDG activation schedule...")
+                testbenches = self.testbench_synthesizer.synthesize_testbenches(
+                    netlist_path=netlist_path,
+                    subckt_name=subckt_name,
+                    pins=pins,
+                    specifications=specifications,
+                    pdg_schedule=pdg_schedule
+                )
+                tb_names = [tb.get("name", str(tb)) for tb in testbenches] if isinstance(testbenches, list) else list(testbenches.keys())
+                self.tracer.end_span(outputs={
+                    "testbench_count": len(testbenches),
+                    "testbenches": tb_names
+                })
 
-            # 4.2 Run LTspice batch simulations & evaluate SymPy oracles
-            self.tracer.start_span(5, f"Phase 5: LTspice & SymPy Evaluation (Loop {iteration})", inputs={
-                "testbench_count": len(testbenches)
-            })
-            if progress_callback:
-                progress_callback(5, f"Phase 5: LTspice & SymPy Evaluation (Loop {iteration})", "Executing headless batch simulation & verifying formal intervals...")
-            logger.info(f"Iteration {iteration}: Executing LTspice simulations & evaluating SymPy oracles...")
-            eval_res = self.evaluator.evaluate_circuit(
-                output_dir=self.output_dir,
-                netlist_filename=netlist_filename,
-                testbenches=testbenches,
-                specifications=specifications
-            )
+                # 4.2 Run LTspice batch simulations & evaluate SymPy oracles
+                self.tracer.start_span(5, f"Phase 5: LTspice & SymPy Evaluation (Loop {iteration})", inputs={
+                    "testbench_count": len(testbenches)
+                })
+                if progress_callback:
+                    progress_callback(5, f"Phase 5: LTspice & SymPy Evaluation (Loop {iteration})", "Executing headless batch simulation & verifying formal intervals...")
+                logger.info(f"Iteration {iteration}: Executing LTspice simulations & evaluating SymPy oracles...")
+                eval_res = self.evaluator.evaluate_circuit(
+                    output_dir=self.output_dir,
+                    netlist_filename=netlist_filename,
+                    testbenches=testbenches,
+                    specifications=specifications
+                )
+
 
             final_evaluation = eval_res
             pass_rate = eval_res["pass_rate_percent"]
+
+            # Keep the best design seen so far (highest #passed, then coverage, then fewest failures)
+            score = (eval_res.get("passed_specs", 0), eval_res.get("coverage_pct", 0.0), -eval_res.get("failed_specs", 0))
+            if best_score is None or score > best_score:
+                best_score, best_eval, best_netlist_path = score, eval_res, netlist_path
             self.tracer.end_span(outputs={
                 "pass_rate_percent": pass_rate,
                 "passed_specs": eval_res["passed_specs"],
@@ -323,7 +378,8 @@ Return ONLY valid JSON.
             })
             if progress_callback:
                 progress_callback(6, f"Phase 6: Closed-Loop Diagnostics (Loop {iteration})", f"Pass Rate: {pass_rate:.1f}% ({eval_res['passed_specs']}/{eval_res['total_specs']}). Analyzing shortfalls...")
-            logger.info(f"Iteration {iteration} Evaluation Result: Pass Rate = {pass_rate:.1f}% ({eval_res['passed_specs']}/{eval_res['total_specs']} specs passed)")
+            logger.info(f"Iteration {iteration} Evaluation Result: Pass Rate = {pass_rate:.1f}% "
+                        f"({eval_res['passed_specs']}/{eval_res['total_specs']} measured testable specs)")
 
             # Analyze shortfalls in this iteration
             shortfalls = []
@@ -362,6 +418,7 @@ Return ONLY valid JSON.
                 "iteration": iteration,
                 "netlist_path": netlist_path,
                 "pass_rate_percent": pass_rate,
+                "coverage_pct": eval_res.get("coverage_pct"),
                 "passed_specs": eval_res["passed_specs"],
                 "failed_specs": eval_res["failed_specs"],
                 "unmeasured_specs": eval_res["unmeasured_specs"],
@@ -386,6 +443,21 @@ Return ONLY valid JSON.
             # If not converged, feed diagnostics into next iteration
             current_feedback = eval_res["diagnostic_feedback"]
             logger.info(f"Refinement Feedback for next iteration:\n{current_feedback}")
+
+        # Restore the best netlist found (the loop may end on a worse iteration)
+        if best_netlist_path and best_netlist_path != final_netlist_path:
+            best_copy = os.path.join(self.output_dir, f"{subckt_name}_BEST.cir")
+            try:
+                shutil.copyfile(best_netlist_path, best_copy)
+                logger.info(f"Best iteration kept: {best_netlist_path} -> {best_copy}")
+                final_netlist_path = best_copy
+                final_evaluation = best_eval
+            except Exception as be:
+                logger.warning(f"Could not copy best netlist: {be}")
+
+        if final_evaluation and "rows" in final_evaluation:
+            art = write_artifacts(final_evaluation, self.output_dir, safe_part_name)
+            logger.info(f"Coverage report: {art['coverage']}")
 
         # -------------------------------------------------------------
         # Phase 5: Generate Final Comprehensive Report & Traces
@@ -453,7 +525,8 @@ Return ONLY valid JSON.
         md_lines = [
             f"# Autonomous AI Analog Circuit Synthesis & Verification Report",
             f"**Target IC:** `{part_name}` | **Subcircuit:** `{subckt_name}`",
-            f"**Overall Datasheet Specification Pass Rate:** `{pass_rate:.1f}%`",
+            f"**Overall Datasheet Specification Pass Rate (among measured specs):** `{pass_rate:.1f}%`",
+            f"**Measurement Coverage (measured / testable specs):** `{(final_eval or {}).get('coverage_pct', 0.0)}%`",
             "",
             "## 1. Executive Summary",
             f"- **IC Category:** {ic_info.get('description', 'Analog Integrated Circuit')}",
