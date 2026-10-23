@@ -45,7 +45,7 @@ def model_extra_body(provider: str, model: str) -> Dict[str, Any]:
     if provider == "openrouter":
         body: Dict[str, Any] = {"usage": {"include": True}}       # returns exact USD cost per call
         if os.environ.get("LLM_THINKING") != "1":
-            body["reasoning"] = {"effort": "low", "exclude": True}
+            body["reasoning"] = {"max_tokens": 0}
         return body
     if provider != "nim" or os.environ.get("LLM_THINKING") == "1":
         return {}
