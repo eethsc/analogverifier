@@ -287,7 +287,7 @@ class PDFDatasheetParser:
     @staticmethod
     def select_pages(parsed: Dict[str, Any], purpose: str) -> List[int]:
         """Selects the page numbers relevant for a given extraction purpose."""
-        pages = parsed["pages"]
+        pages = {int(k): v for k, v in parsed["pages"].items()}
         want = {
             "pins": ["pin_configuration"],
             "specs": ["abs_max", "recommended", "electrical", "esd", "thermal"],
@@ -320,7 +320,7 @@ class PDFDatasheetParser:
                           layout: bool = False) -> str:
         out, used = [], 0
         for pn in page_numbers:
-            pg = parsed["pages"][pn]
+            pg = parsed["pages"].get(pn) or parsed["pages"].get(str(pn))
             t = pg.get("layout_text") if layout and pg.get("layout_text") else pg["text"]
             chunk = f"\n===== PAGE {pn} =====\n{t}"
             if used + len(chunk) > budget_chars:
