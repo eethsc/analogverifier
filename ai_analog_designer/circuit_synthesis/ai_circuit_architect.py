@@ -5,13 +5,28 @@ from ..openrouter_client import OpenRouterClient
 
 class AICircuitArchitect:
     """
-    AI-Driven Analog Circuit Netlist Generator (No Hardcoding!).
-    Uses LLM (via OpenRouter) as an expert analog IC design engineer to synthesize
-    topologies, compute transistor & component sizings, and generate complete SPICE subcircuits.
-    Implements closed-loop simulation-guided refinement inspired by AnalogCoder and LaMAGIC.
+    AI-Driven Analog Circuit Netlist Generator powered by Google Research's Harness² framework.
+    Uses multi-component execution harnesses (C1-C8) and contrastive Propose-Probe-Compose cycles
+    with OpenRouter and NVIDIA NIM API to synthesize transistor-level topologies and sizings.
     """
-    def __init__(self, llm_client: Optional[OpenRouterClient] = None):
+    def __init__(
+        self,
+        llm_client: Optional[Any] = None,
+        use_harness2: bool = True,
+        improver_provider: str = "nim",
+        synthesizer_provider: str = "openrouter"
+    ):
         self.llm = llm_client or OpenRouterClient()
+        self.use_harness2 = use_harness2
+        if self.use_harness2:
+            from .harness2 import Harness2CircuitArchitect
+            self.harness2_engine = Harness2CircuitArchitect(
+                llm_client=self.llm,
+                improver_provider=improver_provider,
+                synthesizer_provider=synthesizer_provider
+            )
+        else:
+            self.harness2_engine = None
 
     def synthesize_netlist(
         self,
@@ -25,8 +40,21 @@ class AICircuitArchitect:
         measurement_plan: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
-        Uses OpenRouter LLM to design and synthesize complete SPICE netlist from datasheet specifications.
+        Synthesizes complete SPICE netlist from datasheet specifications.
+        Leverages Harness² recursive engine when enabled.
         """
+        if self.use_harness2 and self.harness2_engine:
+            return self.harness2_engine.synthesize_netlist(
+                ic_info=ic_info,
+                pins=pins,
+                specifications=specifications,
+                pdg_schedule=pdg_schedule,
+                iteration=iteration,
+                prior_feedback=prior_feedback,
+                user_prompt=user_prompt,
+                measurement_plan=measurement_plan
+            )
+
         part_name = ic_info.get("name", "ANALOG_IC")
         subckt_name = re.sub(r'[^a-zA-Z0-9_]', '_', part_name).upper()
 

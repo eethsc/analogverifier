@@ -66,3 +66,11 @@ benchmark_results/testbench_calibration/**/*.cir
 benchmark_results/testbench_calibration/**/*.raw
 benchmark_results/testbench_calibration/**/*.log
 benchmark_results/testbench_calibration/**/*.db
+
+# Framework clones & local development artefacts
+harness2_repo/
+parsebench_repo/
+.codebase-memory/
+exported_graph/
+output_*/
+export_*.py

@@ -1,0 +1,12 @@
+{
+  "experiences": [
+    {
+      "task_id": "LM358",
+      "category": "operational_amplifier",
+      "cue": "Unsatisfied specs on LM358: ['VS', 'VID', 'VI', 'tSC']",
+      "delta": 25.0,
+      "path": "operational_amplifier\\LM358"
+    }
+  ],
+  "count": 1
+}

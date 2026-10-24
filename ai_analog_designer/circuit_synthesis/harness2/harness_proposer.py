@@ -1,0 +1,192 @@
+"""
+Harness² Contrastive Propose-Probe-Compose Engine.
+Supports dual-LLM backend routing (NVIDIA NIM API and OpenRouter).
+"""
+from __future__ import annotations
+
+import os
+import re
+import json
+import logging
+from typing import Dict, Any, List, Optional, Tuple
+
+from ai_analog_designer.llm_client import LLMClient
+from .harness_tree import HarnessTree
+
+logger = logging.getLogger("Harness2Proposer")
+
+
+class Harness2Proposer:
+    """
+    Implements task-level recursion: Propose, Probe, and Compose.
+    Coordinates between NVIDIA NIM API and OpenRouter for multi-model harness editing.
+    """
+
+    def __init__(
+        self,
+        nim_client: Optional[LLMClient] = None,
+        openrouter_client: Optional[LLMClient] = None,
+        improver_provider: str = "nim",
+        synthesizer_provider: str = "openrouter"
+    ):
+        # Improver (proposer/composer): Can use NVIDIA NIM (550B reasoning) or OpenRouter
+        self.nim_client = nim_client or LLMClient(provider="nim")
+        self.openrouter_client = openrouter_client or LLMClient(provider="openrouter")
+
+        self.improver_provider = improver_provider.lower()
+        self.synthesizer_provider = synthesizer_provider.lower()
+
+    def get_improver_client(self) -> LLMClient:
+        return self.nim_client if self.improver_provider == "nim" else self.openrouter_client
+
+    def get_synthesizer_client(self) -> LLMClient:
+        return self.openrouter_client if self.synthesizer_provider == "openrouter" else self.nim_client
+
+    def propose_edits(
+        self,
+        current_tree: HarnessTree,
+        part_name: str,
+        specifications: List[Dict[str, Any]],
+        simulation_feedback: str,
+        failed_specs: List[Dict[str, Any]],
+        compiler_errors: List[str]
+    ) -> Tuple[HarnessTree, HarnessTree]:
+        """
+        Generates two contrastive candidate harness trees:
+          Candidate A: Invariant Edit (INV) - SPICE syntax, convergence, guardrails, ground isolation.
+          Candidate B: Domain Edit (DOM) - Transistor sizing (W/L), topology selection, compensation.
+        """
+        client = self.get_improver_client()
+
+        sys_prompt = """You are an Expert Harness² Meta-Architect for Analog SPICE Circuit Synthesis.
+Your goal is to optimize the execution harness (System Prompt, Guardrails, Memory, Tool Guidance)
+surrounding an AI circuit designer.
+Given simulation diagnostics from the latest iteration, propose concrete, targeted updates to the harness.
+Never output prose or chat; return ONLY a JSON structure defining the edits.
+"""
+
+        failed_summary = "\n".join([
+            f"  - Parameter '{s.get('symbol')}': Measured={s.get('measured')}, Expected Range=[{s.get('min')}, {s.get('max')}] {s.get('unit', '')} | Diagnostic: {s.get('diagnostic')}"
+            for s in failed_specs[:8]
+        ])
+
+        errors_summary = "\n".join(compiler_errors[:5]) if compiler_errors else "None (SPICE netlist compiled cleanly)"
+
+        user_prompt = f"""Task: Synthesize compliant SPICE subcircuit for {part_name}.
+
+## SIMULATION SHORTFALLS & FAILURES:
+### Compiler / Convergence Errors:
+{errors_summary}
+
+### Violated Specifications:
+{failed_summary}
+
+### Detailed Diagnostic Feedback:
+{simulation_feedback[:2000]}
+
+## TASK:
+Generate TWO distinct, contrastive harness improvements:
+1. `candidate_inv` (Invariant Edit):
+   - Focus on SPICE syntax, numerical stability, avoiding singular matrix at high-impedance nodes, and strict subcircuit pin rules.
+   - Propose additions to `c2_guardrails` or `c3_memory`.
+2. `candidate_dom` (Domain Edit):
+   - Focus on analog circuit topology, stage biasing, compensation capacitors (Cc), nulling resistors (Rz), and transistor aspect ratios (W/L) needed to hit the failed specs.
+   - Propose additions to `c1_system_prompt`, `c3_memory`, or new domain blueprint in `c5_skills`.
+
+Return JSON format:
+{{
+  "candidate_inv": {{
+    "title": "<short description of fix>",
+    "guardrails_addition": "<exact SPICE rules to append to C2 Guardrails, or empty>",
+    "memory_addition": "<exact convergence lesson to append to C3 Memory, or empty>"
+  }},
+  "candidate_dom": {{
+    "title": "<short description of fix>",
+    "system_prompt_addition": "<exact synthesis directive to append to C1, or empty>",
+    "memory_addition": "<exact sizing/topology lesson to append to C3, or empty>",
+    "skill_addition": {{
+      "name": "<e.g. low_dropout_biasing>",
+      "content": "<compact blueprint text>"
+    }}
+  }}
+}}
+"""
+        logger.info(f"Harness² Proposer querying improver ({self.improver_provider.upper()}) for contrastive edits...")
+        try:
+            resp = client.complete_json(user_prompt, system_prompt=sys_prompt, tag="harness2_propose", max_tokens=3500)
+        except Exception as e:
+            logger.warning(f"Improver call failed on {self.improver_provider}, falling back to alternative provider: {e}")
+            alt_client = self.openrouter_client if self.improver_provider == "nim" else self.nim_client
+            resp = alt_client.complete_json(user_prompt, system_prompt=sys_prompt, tag="harness2_propose_fallback", max_tokens=3500)
+
+        # Build Candidate A (Invariant)
+        tree_inv = current_tree.clone()
+        inv_data = resp.get("candidate_inv", {})
+        if inv_data.get("guardrails_addition"):
+            tree_inv.c2_guardrails += f"\n\n### HARNESS² INVARIANT DIRECTIVE:\n{inv_data['guardrails_addition'].strip()}"
+        if inv_data.get("memory_addition"):
+            tree_inv.c3_memory += f"\n- {inv_data['memory_addition'].strip()}"
+
+        # Build Candidate B (Domain)
+        tree_dom = current_tree.clone()
+        dom_data = resp.get("candidate_dom", {})
+        if dom_data.get("system_prompt_addition"):
+            tree_dom.c1_system_prompt += f"\n\n### HARNESS² DOMAIN DIRECTIVE:\n{dom_data['system_prompt_addition'].strip()}"
+        if dom_data.get("memory_addition"):
+            tree_dom.c3_memory += f"\n- {dom_data['memory_addition'].strip()}"
+        skill = dom_data.get("skill_addition")
+        if isinstance(skill, dict) and skill.get("name") and skill.get("content"):
+            tree_dom.c5_skills[skill["name"]] = skill["content"].strip()
+
+        return tree_inv, tree_dom
+
+    def compose_harness(
+        self,
+        base_tree: HarnessTree,
+        tree_a: HarnessTree,
+        tree_b: HarnessTree,
+        eval_base: Dict[str, Any],
+        eval_a: Dict[str, Any],
+        eval_b: Dict[str, Any]
+    ) -> Tuple[HarnessTree, str, str]:
+        """
+        Contrasts the behavioral results of the candidate probes and composes
+        the optimal unified harness tree.
+        """
+        score_base = eval_base.get("pass_rate_percent", 0.0)
+        score_a = eval_a.get("pass_rate_percent", 0.0)
+        score_b = eval_b.get("pass_rate_percent", 0.0)
+
+        passed_a = eval_a.get("passed_specs", 0)
+        passed_b = eval_b.get("passed_specs", 0)
+        passed_base = eval_base.get("passed_specs", 0)
+
+        logger.info(f"Harness² Compose: Base={score_base:.1f}% ({passed_base}), Probe A={score_a:.1f}% ({passed_a}), Probe B={score_b:.1f}% ({passed_b})")
+
+        composed_tree = base_tree.clone()
+        decision_summary = []
+        lesson = ""
+
+        # Did Probe A (Invariant) fix compiler/convergence issues or improve pass rate?
+        if score_a > score_base or (not eval_a.get("simulation_errors") and eval_base.get("simulation_errors")):
+            composed_tree.c2_guardrails = tree_a.c2_guardrails
+            decision_summary.append("Adopted Invariant (Candidate A) guardrails for SPICE convergence.")
+            lesson += " Adopted convergence guardrails."
+
+        # Did Probe B (Domain) improve electrical specification compliance?
+        if score_b > score_base or passed_b > passed_base:
+            composed_tree.c1_system_prompt = tree_b.c1_system_prompt
+            composed_tree.c5_skills.update(tree_b.c5_skills)
+            decision_summary.append("Adopted Domain (Candidate B) topology blueprints and sizing directives.")
+            lesson += " Adopted domain sizing/topology blueprint."
+
+        # Merge memory additions from both successful candidates
+        merged_memory = set(base_tree.c3_memory.splitlines())
+        for tree in (tree_a, tree_b):
+            for line in tree.c3_memory.splitlines():
+                if line.strip() and line not in merged_memory:
+                    composed_tree.c3_memory += f"\n{line}"
+                    merged_memory.add(line)
+
+        evidence = f"Base Pass Rate: {score_base:.1f}% -> Composed Best Probe: {max(score_a, score_b):.1f}%."
+        return composed_tree, " | ".join(decision_summary) or "Maintained baseline harness.", evidence

@@ -22,7 +22,7 @@ class NetlistValidator:
         pass
 
     # ------------------------------------------------------------------ structural pre-pass
-    _ELEM = re.compile(r"^[RCLMQDJKVIEFGHBXSWTOUZ][A-Za-z0-9_\-\.]*\s+\S", re.I)
+    _ELEM = re.compile(r"^[RCLMQDJKVIEFGHBXS][A-Za-z0-9_\-\.]*\s+\S", re.I)
 
     @classmethod
     def normalize_structure(cls, code: str) -> str:
@@ -72,6 +72,10 @@ class NetlistValidator:
             fixed = []
             for ln in body:
                 s = ln.strip()
+                # Check for accidental pin declarations like OUT1 OUT1 0 or IN1- IN1- 0
+                if re.match(r"^(?:OUT|IN)\d*[\+\-]?\s+(?:OUT|IN)\d*[\+\-]?\b", s, re.I):
+                    fixed.append("* " + s)
+                    continue
                 if not s or s.startswith(("*", ";", "+", ".")) or cls._ELEM.match(s):
                     fixed.append(ln)
                 else:
@@ -182,25 +186,36 @@ class NetlistValidator:
                 clean_lines.append(f"* Removed subckt directive: {line_str}")
                 continue
 
+            # Strip inline comments for syntactic token checks
+            code_only = re.split(r'[;\$]|(?<!\w)\*', line_str)[0].strip()
+            tokens_code = code_only.split()
             tokens = line_str.split()
             first_tok = tokens[0] if tokens else ""
+
+            # Drop accidental pin declaration lines inside body: e.g. OUT1 OUT1 0, IN1- IN1- 0, V- V- 0
+            if tokens_code and re.match(r"^(?:OUT|IN)\d*[\+\-]?$", tokens_code[0], re.I):
+                clean_lines.append(f"* Removed pin declaration: {line_str}")
+                continue
+            if tokens_code and tokens_code[0] in ("V-", "V+", "GND") and len(tokens_code) <= 4 and any(t == "0" for t in tokens_code[1:]):
+                clean_lines.append(f"* Removed pin ground short: {line_str}")
+                continue
 
             # Remove invalid independent voltage model: e.g. .model VREF V (V=2.5)
             if line_str.lower().startswith(".model") and len(tokens) >= 3 and tokens[2].upper() == "V":
                 clean_lines.append(f"* Removed invalid V model: {line_str}")
                 continue
 
-            # Check for incomplete / truncated device lines (e.g. bare "C_OUTR")
-            if tokens and first_tok[0].upper() in "RCLMQ" and not first_tok.startswith("."):
+            # Check for incomplete / truncated device lines (e.g. bare "C_OUTR", missing BJT nodes)
+            if tokens_code and first_tok[0].upper() in "RCLMQ" and not first_tok.startswith("."):
                 f_char = first_tok[0].upper()
-                if f_char in "RCL" and len(tokens) < 4:
+                if f_char in "RCL" and len(tokens_code) < 4:
                     clean_lines.append(f"* Truncated element removed: {line_str}")
                     continue
-                elif f_char == "M" and len(tokens) < 6:
+                elif f_char == "M" and len(tokens_code) < 6:
                     clean_lines.append(f"* Truncated element removed: {line_str}")
                     continue
-                elif f_char == "Q" and len(tokens) < 5:
-                    clean_lines.append(f"* Truncated element removed: {line_str}")
+                elif f_char == "Q" and len(tokens_code) < 5:
+                    clean_lines.append(f"* Truncated BJT removed (missing terminal): {line_str}")
                     continue
 
             # For behavioral sources (B, E, G): strip invalid parameters TD=... and TRISTATE=...
@@ -340,8 +355,19 @@ class NetlistValidator:
                             line_str = line.strip()
 
             # Disambiguate duplicate instance names (e.g. M_OUT_N defined twice in same subckt)
+            # Strip inline comments for syntactic token checks
+            code_only = re.split(r'[;\$]|(?<!\w)\*', line_str)[0].strip()
+            tokens_code = code_only.split()
             tokens = line_str.split()
             first_tok = tokens[0] if tokens else ""
+
+            # Drop accidental pin declaration lines inside body: e.g. OUT1 OUT1 0, IN1- IN1- 0, V- V- 0
+            if tokens_code and re.match(r"^(?:OUT|IN)\d*[\+\-]?$", tokens_code[0], re.I):
+                clean_lines.append(f"* Removed pin declaration: {line_str}")
+                continue
+            if tokens_code and tokens_code[0] in ("V-", "V+", "GND") and len(tokens_code) <= 4 and any(t == "0" for t in tokens_code[1:]):
+                clean_lines.append(f"* Removed pin ground short: {line_str}")
+                continue
             if first_tok and first_tok[0].upper() in "RCLMQDVIXEGFHSW" and not first_tok.startswith("."):
                 inst_name = first_tok.upper()
                 if inst_name in scope_instances:
