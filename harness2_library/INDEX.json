@@ -6,7 +6,28 @@
       "cue": "Unsatisfied specs on LM358: ['VS', 'VID', 'VI', 'tSC']",
       "delta": 25.0,
       "path": "operational_amplifier\\LM358"
+    },
+    {
+      "task_id": "TL431",
+      "category": "voltage_reference",
+      "cue": "Unsatisfied specs on TL431: ['Vref', 'VI(dev)', 'VI(dev)', 'ΔVref/ΔVKA']",
+      "delta": 40.0,
+      "path": "voltage_reference\\TL431"
+    },
+    {
+      "task_id": "LM393",
+      "category": "comparator",
+      "cue": "Unsatisfied specs on LM393: ['VIO', 'VIO', 'IIO', 'IIO']",
+      "delta": 72.7,
+      "path": "comparator\\LM393"
+    },
+    {
+      "task_id": "TL431",
+      "category": "voltage_reference",
+      "cue": "Unsatisfied specs on TL431: ['Vref', 'VI(dev)', 'VI(dev)', 'ΔVref/ΔVKA']",
+      "delta": 40.0,
+      "path": "voltage_reference\\TL431"
     }
   ],
-  "count": 1
+  "count": 4
 }

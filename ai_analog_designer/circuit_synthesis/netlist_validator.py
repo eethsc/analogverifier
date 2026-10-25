@@ -267,10 +267,42 @@ class NetlistValidator:
                 line_str = line.strip()
                 tokens = line_str.split()
 
+                # Fix 3-terminal MOSFETs where bulk was omitted before model (e.g. M1 d g s PMOS W=10u L=1u)
+                # SPICE requires 4 nodes: d g s b model. If tokens_code has only 3 nodes, tie bulk to source.
+                if len(tokens_code) >= 5:
+                    fourth_tok = tokens_code[4].upper()
+                    if fourth_tok in ("NMOS", "PMOS", "CMOSN", "CMOSP", "NCH", "PCH") or re.match(r'^(?:N|P)MOS[0-9_]*$', fourth_tok):
+                        s_node = tokens[3]
+                        model_name = tokens[4]
+                        pattern = re.compile(r'(\b' + re.escape(tokens[0]) + r'\s+\S+\s+\S+\s+' + re.escape(s_node) + r')\s+(' + re.escape(model_name) + r'\b)', re.IGNORECASE)
+                        line = pattern.sub(r'\1 ' + s_node + r' \2', line, count=1)
+                        line_str = line.strip()
+                        tokens = line_str.split()
+
+            # For Capacitors (C...), ensure exactly 2 nodes before value (fix Cc n1 n2 {extra} 20p)
+            if tokens and first_tok.upper().startswith("C") and not first_tok.startswith("."):
+                if len(tokens_code) >= 5 and re.match(r'^[0-9\.]+[pnumkMG]?[Ff]?$', tokens_code[-1], re.I):
+                    val_tok = tokens_code[-1]
+                    n1, n2 = tokens_code[1], tokens_code[2]
+                    line = f"{tokens[0]} {n1} {n2} {val_tok}"
+                    line_str = line.strip()
+                    tokens = line_str.split()
+
             # For BJTs (Q...), strip invalid MOSFET sizing parameters W=... L=...
             if tokens and tokens[0].upper().startswith("Q") and not tokens[0].startswith("."):
                 line_str = re.sub(r'\b[WL]=\S+', '', line_str, flags=re.IGNORECASE).strip()
                 line = re.sub(r'\b[WL]=\S+', '', line, flags=re.IGNORECASE).strip()
+                tokens = line.split()
+                code_only = re.split(r'[;\$]|(?<!\w)\*', line_str)[0].strip()
+                tokens_code = code_only.split()
+
+                # If BJT only has 2 nodes before model (e.g. Q1 c b QNPN), insert reference emitter
+                if len(tokens_code) >= 4 and tokens_code[3].upper() in ("QNPN", "QPNP", "NPN", "PNP"):
+                    ref_node = "V-" if any("V-" in t for t in tokens) else "0"
+                    model_tok = tokens_code[3]
+                    line = re.sub(r'\b' + re.escape(model_tok) + r'\b', f'{ref_node} {model_tok}', line, count=1)
+                    line_str = line.strip()
+                    tokens = line_str.split()
 
             # In LTspice expressions, logical AND is & (not &&) and logical OR is | (not ||)
             if "&&" in line:
@@ -286,35 +318,16 @@ class NetlistValidator:
                 line = re.sub(r'\bDIFF\s*\(', 'ddt(', line, flags=re.IGNORECASE)
                 line_str = line.strip()
 
-            # Sanitize mid-line * comments to ; comments (strictly for non-expression device lines)
-            is_expr_line = line_str.lower().startswith((".param", ".meas", ".func", "b", "e", "g"))
-            if not is_expr_line and " *" in line:
-                parts = []
-                inside_braces = False
-                inside_quotes = False
-                inside_parens = 0
-                i = 0
-                while i < len(line):
-                    ch = line[i]
-                    if ch in ("'", '"'):
-                        inside_quotes = not inside_quotes
-                    elif ch == '{':
-                        inside_braces = True
-                    elif ch == '}':
-                        inside_braces = False
-                    elif ch == '(':
-                        inside_parens += 1
-                    elif ch == ')':
-                        inside_parens = max(0, inside_parens - 1)
-                    
-                    if not inside_quotes and not inside_braces and inside_parens == 0 and line[i:i+2] == " *":
-                        rest = line[i+2:].strip()
-                        if rest and not any(op in rest for op in ["=", "+", "-", "/", "(", ")"]) and not rest[0].isdigit():
-                            parts.append(" ; " + rest)
-                            break
-                    parts.append(ch)
-                    i += 1
-                line = "".join(parts)
+            # Sanitize mid-line * comments to ; comments (e.g. ".param Ibias = 300uA * comment", "R1 1 2 1k * comment")
+            if " *" in line:
+                if "{" in line and "}" in line:
+                    m = re.match(r"^(.*?\{.*?\})(.*)$", line)
+                    if m:
+                        prefix, suffix = m.group(1), m.group(2)
+                        suffix = re.sub(r'(?<=\S)\s+\*\s*([A-Za-z].*)$', r' ; \g<1>', suffix)
+                        line = prefix + suffix
+                elif "{" not in line:
+                    line = re.sub(r'(?<=\S)\s+\*\s*([A-Za-z].*)$', r' ; \g<1>', line)
                 line_str = line.strip()
 
             # Wrap bare parameter names or unbraced math on R, C, L devices in curly braces { ... }

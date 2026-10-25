@@ -168,13 +168,16 @@ The subcircuit must work with its negative supply pin tied to 0 V (single supply
         base_eval: Dict[str, Any],
         eval_probe_fn: Callable[[str, str], Dict[str, Any]],
         measurement_plan: Optional[Dict[str, Any]] = None,
-        user_prompt: Optional[str] = None
-    ) -> Tuple[Dict[str, Any], HarnessTree, str]:
+        user_prompt: Optional[str] = None,
+        base_synth: Optional[Dict[str, Any]] = None,
+        iteration_index: int = 2
+    ) -> Tuple[Dict[str, Any], Dict[str, Any], HarnessTree, str]:
         """
         Executes a full Harness² Propose–Probe–Compose step:
           1. Proposes Candidate A (Invariant) and Candidate B (Domain)
           2. Probes both candidates using the simulation evaluator probe function
           3. Contrasts behaviors and composes the evolved harness tree
+          4. Returns (winning_res, winning_eval, composed_tree, decision_notes)
         """
         part_name = ic_info.get("name", "ANALOG_IC")
         feedback = base_eval.get("diagnostic_feedback", "")
@@ -192,7 +195,8 @@ The subcircuit must work with its negative supply pin tied to 0 V (single supply
         )
 
         # 2. Probe A (Invariant)
-        logger.info("Executing Probe A (Invariant Candidate)...")
+        tag_a = f"iter{iteration_index}_probe_a"
+        logger.info(f"Executing Probe A ({tag_a}: Invariant Candidate)...")
         res_a = self.synthesize_candidate(
             tree=tree_inv,
             ic_info=ic_info,
@@ -201,12 +205,13 @@ The subcircuit must work with its negative supply pin tied to 0 V (single supply
             pdg_schedule=pdg_schedule,
             measurement_plan=measurement_plan,
             user_prompt=user_prompt,
-            prior_feedback="Focus strictly on SPICE convergence and syntax invariants."
+            prior_feedback="Focus strictly on SPICE convergence, numerical stability, and syntax invariants."
         )
-        eval_a = eval_probe_fn(res_a["spice_netlist"], "probe_a")
+        eval_a = eval_probe_fn(res_a["spice_netlist"], tag_a)
 
         # 3. Probe B (Domain)
-        logger.info("Executing Probe B (Domain Candidate)...")
+        tag_b = f"iter{iteration_index}_probe_b"
+        logger.info(f"Executing Probe B ({tag_b}: Domain Candidate)...")
         res_b = self.synthesize_candidate(
             tree=tree_dom,
             ic_info=ic_info,
@@ -215,9 +220,9 @@ The subcircuit must work with its negative supply pin tied to 0 V (single supply
             pdg_schedule=pdg_schedule,
             measurement_plan=measurement_plan,
             user_prompt=user_prompt,
-            prior_feedback="Focus strictly on circuit topology sizing to satisfy unmet specifications."
+            prior_feedback="Focus strictly on circuit topology, stage biasing, and transistor sizing to satisfy unmet specifications."
         )
-        eval_b = eval_probe_fn(res_b["spice_netlist"], "probe_b")
+        eval_b = eval_probe_fn(res_b["spice_netlist"], tag_b)
 
         # 4. Compose
         composed_tree, decision_notes, evidence = self.proposer.compose_harness(
@@ -229,16 +234,34 @@ The subcircuit must work with its negative supply pin tied to 0 V (single supply
             eval_b=eval_b
         )
 
-        # Pick winning rollout
-        score_base = base_eval.get("pass_rate_percent", 0.0)
-        score_a = eval_a.get("pass_rate_percent", 0.0)
-        score_b = eval_b.get("pass_rate_percent", 0.0)
+        # Robust Monotonic Selection
+        def score_tuple(ev):
+            if not ev:
+                return (-1, -1.0, -999)
+            return (
+                ev.get("passed_specs", 0),
+                ev.get("coverage_pct", 0.0),
+                -len(ev.get("simulation_errors", []))
+            )
 
-        winning_res = res_b if score_b >= score_a else res_a
-        best_score = max(score_a, score_b)
+        st_base = score_tuple(base_eval)
+        st_a = score_tuple(eval_a)
+        st_b = score_tuple(eval_b)
+
+        candidates = []
+        if base_synth is not None:
+            candidates.append((st_base, base_synth, base_eval, "Base"))
+        candidates.append((st_a, res_a, eval_a, "Probe A"))
+        candidates.append((st_b, res_b, eval_b, "Probe B"))
+
+        candidates.sort(key=lambda c: c[0], reverse=True)
+        best_tuple, winning_res, winning_eval, winning_tag = candidates[0]
+
+        score_base = base_eval.get("pass_rate_percent", 0.0)
+        best_score = winning_eval.get("pass_rate_percent", 0.0)
 
         # If improvement was made, save to persistent library
-        if best_score > score_base:
+        if best_score > score_base or winning_eval.get("passed_specs", 0) > base_eval.get("passed_specs", 0):
             cue = f"Unsatisfied specs on {part_name}: {[s.get('symbol') for s in failed_specs[:4]]}"
             self.library.record_experience(
                 task_id=part_name,
@@ -252,7 +275,7 @@ The subcircuit must work with its negative supply pin tied to 0 V (single supply
             )
 
         self.active_tree = composed_tree
-        return winning_res, composed_tree, decision_notes
+        return winning_res, winning_eval, composed_tree, f"Winner: {winning_tag} | {decision_notes}" 
 
     def synthesize_netlist(
         self,
