@@ -8,7 +8,9 @@ from typing import Dict, Any, List, Optional
 from .openrouter_client import OpenRouterClient
 from .pdf_to_graph import PDFDatasheetParser, HardwareKnowledgeGraphBuilder, PortDependencyGraphExtractor
 from .circuit_synthesis import AICircuitArchitect, NetlistValidator
+from .circuit_synthesis.harness2 import Harness2CircuitArchitect, HarnessTree
 from .neuro_symbolic_verifier import TestbenchSynthesizer, ClosedLoopEvaluator
+from .neuro_symbolic_verifier.dynamic_testbench_harness import DynamicTestbenchHarness, MathPostProcessor
 from .neuro_symbolic_verifier.verification_flow import plan_for, verify, write_artifacts
 from .visualization import ProcessVisualizer
 from .tracing import ExecutionTracer
@@ -22,10 +24,10 @@ class AutonomousAnalogDesignAgent:
     Integrates:
       1. ArXiv-grounded PDF-to-Knowledge-Graph extraction
       2. Port Dependency Graph (PDG) topological scheduling
-      3. First-principles AI circuit topology and sizing synthesis (Zero hardcoding)
-      4. LTspice batch simulation
-      5. Neuro-symbolic SymPy oracle verification
-      6. Closed-loop simulation-guided repair loop
+      3. Google Research Harness² Recursive Synthesis Engine (NIM 550B + OpenRouter)
+      4. Dynamic Testbench Harness with Fourier & Mathematical Post-Processing (NumPy/SciPy)
+      5. Deterministic LTspice batch simulation & Neuro-symbolic SymPy verification
+      6. Closed-loop simulation-guided contrastive repair loop
     """
 
     def __init__(
@@ -47,6 +49,8 @@ class AutonomousAnalogDesignAgent:
         self.kg_builder = HardwareKnowledgeGraphBuilder(llm_client=self.llm)
         self.pdg_extractor = PortDependencyGraphExtractor()
         self.circuit_architect = AICircuitArchitect(llm_client=self.llm)
+        self.harness2_architect = Harness2CircuitArchitect(llm_client=self.llm)
+        self.dynamic_harness = DynamicTestbenchHarness(llm_client=self.llm, simulator_path=simulator_path)
         self.netlist_validator = NetlistValidator()
         self.testbench_synthesizer = TestbenchSynthesizer(llm_client=self.llm)
         self.evaluator = ClosedLoopEvaluator(simulator_path=simulator_path)
@@ -110,6 +114,89 @@ Return ONLY valid JSON.
                 ]
             }
         return data
+
+    def _evaluate_netlist_unified(
+        self,
+        netlist_code: str,
+        subckt_name: str,
+        pins: List[Dict[str, Any]],
+        specifications: List[Dict[str, Any]],
+        pdg_schedule: Dict[str, float],
+        tag: str
+    ) -> Dict[str, Any]:
+        """
+        Unified evaluation pipeline combining deterministic fixtures (DC/AC small-signal)
+        with LLM-driven dynamic testbenches and mathematical post-processing (Fourier THD+N, power, frequency).
+        """
+        val_res = self.netlist_validator.validate(
+            netlist=netlist_code,
+            expected_subckt_name=subckt_name,
+            expected_pins=pins
+        )
+        cleaned_netlist = val_res.get("cleaned_netlist", netlist_code.strip())
+
+        # 1. Deterministic verification
+        sched_us = {k: v * 1e6 for k, v in pdg_schedule.items()}
+        det_eval = verify(
+            netlist=cleaned_netlist,
+            plan=self.spec_plan,
+            schedule_us=sched_us,
+            out_dir=self.output_dir,
+            dut_name=subckt_name,
+            label=tag
+        )
+
+        # 2. Dynamic verification for complex specs (THD+N, power, frequency, rDS(on), etc.)
+        dynamic_specs = self.dynamic_harness.identify_dynamic_specs(specifications)
+        if dynamic_specs:
+            tb_file = os.path.join(self.output_dir, f"{subckt_name}_{tag}.cir")
+            with open(tb_file, "w", encoding="utf-8") as f:
+                f.write(cleaned_netlist)
+
+            dut_class = self.spec_plan.get("device_class", "Analog IC")
+            dyn_tb = self.dynamic_harness.synthesize_dynamic_testbench(
+                subckt_name=subckt_name,
+                pins=pins,
+                target_specs=dynamic_specs,
+                pdg_schedule=pdg_schedule,
+                netlist_path=tb_file,
+                dut_category=dut_class
+            )
+            dyn_eval = self.dynamic_harness.execute_and_evaluate(
+                testbench_deck=dyn_tb["content"],
+                tb_name=f"{subckt_name}_{tag}_dyn",
+                out_dir=self.output_dir,
+                target_specs=dynamic_specs
+            )
+
+            # Unified metrics merging
+            det_passed = det_eval.get("passed_specs", 0)
+            det_failed = det_eval.get("failed_specs", 0)
+            dyn_passed = dyn_eval.get("passed_count", 0)
+            dyn_failed = dyn_eval.get("failed_count", 0)
+
+            total_passed = det_passed + dyn_passed
+            total_measured = det_passed + det_failed + dyn_passed + dyn_failed
+
+            det_eval["passed_specs"] = total_passed
+            det_eval["failed_specs"] = det_failed + dyn_failed
+            if total_measured > 0:
+                det_eval["pass_rate_percent"] = round(100.0 * total_passed / total_measured, 1)
+
+            # Append dynamic evaluations to spec_evaluations list
+            if "spec_evaluations" not in det_eval:
+                det_eval["spec_evaluations"] = []
+            det_eval["spec_evaluations"].extend(dyn_eval.get("spec_evaluations", []))
+
+            # Merge feedback diagnostics
+            if dyn_eval.get("diagnostic_feedback"):
+                existing_fb = det_eval.get("diagnostic_feedback", "")
+                det_eval["diagnostic_feedback"] = (existing_fb + "\n" + dyn_eval["diagnostic_feedback"]).strip()
+
+            det_eval["fourier_data"] = dyn_eval.get("fourier_data")
+            det_eval["simulation_errors"] = det_eval.get("simulation_errors", []) + dyn_eval.get("simulation_errors", [])
+
+        return det_eval
 
     def run(
         self,
@@ -239,7 +326,7 @@ Return ONLY valid JSON.
         })
 
         # -------------------------------------------------------------
-        # Phase 3 & 4: AI Synthesis & Closed-Loop Verification Loop
+        # Phase 3 & 4: Harness² AI Synthesis & Dynamic Verification Loop
         # -------------------------------------------------------------
         current_feedback = None
         design_iterations = []
@@ -250,28 +337,62 @@ Return ONLY valid JSON.
         best_eval = None
         best_netlist_path = None
 
+        # Bootstrap Harness² 8-component tree from persistent experience library
+        dut_category = ic_info.get("category", "analog_ic")
+        active_harness_tree = self.harness2_architect.bootstrap_for_device(
+            category=dut_category,
+            part_name=part_name
+        )
+
         for iteration in range(1, total_loop_budget + 1):
             if progress_callback:
-                progress_callback(3, f"Phase 3: AI Netlist Synthesis (Loop {iteration})", "Synthesizing transistor-level SPICE netlist from first principles...")
+                progress_callback(3, f"Phase 3: Harness² Synthesis (Loop {iteration})", "Synthesizing convergent netlist via recursive Harness² meta-engine...")
 
-            logger.info(f"--- Iteration {iteration}/{total_loop_budget}: AI Netlist Synthesis ---")
-            self.tracer.start_span(3, f"Phase 3: AI Netlist Synthesis (Loop {iteration})", inputs={
+            logger.info(f"--- Iteration {iteration}/{total_loop_budget}: Harness² Netlist Synthesis ---")
+            self.tracer.start_span(3, f"Phase 3: Harness² Netlist Synthesis (Loop {iteration})", inputs={
                 "iteration": iteration,
                 "subckt_name": subckt_name,
                 "user_prompt": user_prompt
             })
 
-            # 3.1 AI Netlist Synthesis (Prompt LLM with specifications, user prompt, and feedback)
-            synth_res = self.circuit_architect.synthesize_netlist(
-                ic_info=ic_info,
-                pins=pins,
-                specifications=specifications,
-                pdg_schedule=pdg_schedule,
-                iteration=iteration,
-                prior_feedback=current_feedback,
-                user_prompt=user_prompt,
-                measurement_plan=self.spec_plan
-            )
+            # 3.1 Synthesis under Harness² (Iteration 1: Baseline; Iteration > 1: Contrastive Propose-Probe-Compose)
+            if iteration == 1 or best_eval is None:
+                synth_res = self.harness2_architect.synthesize_candidate(
+                    tree=active_harness_tree,
+                    ic_info=ic_info,
+                    pins=pins,
+                    specifications=specifications,
+                    pdg_schedule={k: v * 1e-6 for k, v in pdg_schedule.items()},
+                    measurement_plan=self.spec_plan,
+                    user_prompt=user_prompt,
+                    prior_feedback=current_feedback
+                )
+            else:
+                def eval_probe(p_netlist: str, p_tag: str) -> Dict[str, Any]:
+                    return self._evaluate_netlist_unified(
+                        netlist_code=p_netlist,
+                        subckt_name=subckt_name,
+                        pins=pins,
+                        specifications=specifications,
+                        pdg_schedule=pdg_schedule,
+                        tag=f"iter{iteration}_{p_tag}"
+                    )
+
+                logger.info(f"Iteration {iteration}: Launching Harness² Contrastive Propose–Probe–Compose cycle...")
+                winning_res, winning_eval, composed_tree, decision_notes = self.harness2_architect.execute_contrastive_iteration(
+                    ic_info=ic_info,
+                    pins=pins,
+                    specifications=specifications,
+                    pdg_schedule={k: v * 1e-6 for k, v in pdg_schedule.items()},
+                    base_eval=best_eval,
+                    eval_probe_fn=eval_probe,
+                    measurement_plan=self.spec_plan,
+                    user_prompt=user_prompt,
+                    iteration_index=iteration
+                )
+                active_harness_tree = composed_tree
+                synth_res = winning_res
+                logger.info(f"Iteration {iteration} Composer Decision: {decision_notes}")
 
             raw_netlist = synth_res.get("spice_netlist", "")
             subckt_name = synth_res.get("subcircuit_name", subckt_name)
@@ -298,64 +419,27 @@ Return ONLY valid JSON.
                 "netlist_line_count": len(cleaned_netlist.splitlines())
             })
 
-            # 4.1/4.2 Deterministic fixtures -> LTspice -> evaluation
-            use_deterministic = os.environ.get("ADA_LEGACY_TESTBENCH") != "1" and self.spec_plan["summary"]["planned"] > 0
-            if use_deterministic:
-                self.tracer.start_span(4, f"Phase 4: Deterministic Testbench Fixtures (Loop {iteration})", inputs={
-                    "netlist": netlist_filename, "fixtures": self.spec_plan["summary"]["distinct_fixtures"]})
-                if progress_callback:
-                    progress_callback(4, f"Phase 4: Deterministic Testbenches (Loop {iteration})",
-                                      f"Building {self.spec_plan['summary']['distinct_fixtures']} LTspice fixtures with fixed .meas names...")
-                logger.info(f"Iteration {iteration}: running deterministic fixtures (no LLM testbench generation)...")
-                eval_res = verify(cleaned_netlist, self.spec_plan,
-                                  {k: v * 1e6 for k, v in pdg_schedule.items()},
-                                  self.output_dir, dut_name=subckt_name, label=f"iter{iteration}")
-                testbenches = []
-                self.tracer.end_span(outputs={"fixtures": len(self.spec_plan["summary"]), "measured": eval_res["coverage_summary"]["measured"],
-                                              "coverage_pct": eval_res["coverage_pct"]})
-                self.tracer.start_span(5, f"Phase 5: LTspice Evaluation (Loop {iteration})", inputs={"measured": eval_res["coverage_summary"]["measured"]})
-                logger.info(f"Iteration {iteration}: coverage {eval_res['coverage_pct']}% "
-                            f"({eval_res['coverage_summary']['measured']}/{eval_res['total_specs']} testable specs measured), "
-                            f"pass {eval_res['pass_rate_percent']}%")
-                self.tracer.end_span(outputs={"pass_rate_percent": eval_res["pass_rate_percent"],
-                                              "coverage_pct": eval_res["coverage_pct"],
-                                              "passed_specs": eval_res["passed_specs"],
-                                              "failed_specs": eval_res["failed_specs"]})
-            else:
-                # legacy path: LLM-written testbenches (used only when no deterministic fixture exists)
-                # 4.1 Synthesize LTspice Testbenches
-                self.tracer.start_span(4, f"Phase 4: Testbench Synthesis (Loop {iteration})", inputs={
-                    "netlist": netlist_filename
-                })
-                if progress_callback:
-                    progress_callback(4, f"Phase 4: Testbench Generation (Loop {iteration})", "Synthesizing .op, .tran, .ac testbenches aligned with PDG schedule...")
-                logger.info(f"Iteration {iteration}: Synthesizing LTspice testbenches using PDG activation schedule...")
-                testbenches = self.testbench_synthesizer.synthesize_testbenches(
-                    netlist_path=netlist_path,
-                    subckt_name=subckt_name,
-                    pins=pins,
-                    specifications=specifications,
-                    pdg_schedule=pdg_schedule
-                )
-                tb_names = [tb.get("name", str(tb)) for tb in testbenches] if isinstance(testbenches, list) else list(testbenches.keys())
-                self.tracer.end_span(outputs={
-                    "testbench_count": len(testbenches),
-                    "testbenches": tb_names
-                })
+            # 4. Phase 4 & 5: Unified Verification (Deterministic Fixtures + LLM Dynamic Testbench with Math Post-Processing)
+            self.tracer.start_span(4, f"Phase 4: Unified Verification (Loop {iteration})", inputs={
+                "netlist": netlist_filename
+            })
+            if progress_callback:
+                progress_callback(4, f"Phase 4: Unified Verification (Loop {iteration})", "Executing deterministic fixtures and dynamic Fourier/math post-processing...")
 
-                # 4.2 Run LTspice batch simulations & evaluate SymPy oracles
-                self.tracer.start_span(5, f"Phase 5: LTspice & SymPy Evaluation (Loop {iteration})", inputs={
-                    "testbench_count": len(testbenches)
-                })
-                if progress_callback:
-                    progress_callback(5, f"Phase 5: LTspice & SymPy Evaluation (Loop {iteration})", "Executing headless batch simulation & verifying formal intervals...")
-                logger.info(f"Iteration {iteration}: Executing LTspice simulations & evaluating SymPy oracles...")
-                eval_res = self.evaluator.evaluate_circuit(
-                    output_dir=self.output_dir,
-                    netlist_filename=netlist_filename,
-                    testbenches=testbenches,
-                    specifications=specifications
-                )
+            eval_res = self._evaluate_netlist_unified(
+                netlist_code=cleaned_netlist,
+                subckt_name=subckt_name,
+                pins=pins,
+                specifications=specifications,
+                pdg_schedule=pdg_schedule,
+                tag=f"iter{iteration}"
+            )
+
+            self.tracer.end_span(outputs={
+                "pass_rate_percent": eval_res["pass_rate_percent"],
+                "passed_specs": eval_res["passed_specs"],
+                "failed_specs": eval_res["failed_specs"]
+            })
 
 
             final_evaluation = eval_res
@@ -400,6 +484,22 @@ Return ONLY valid JSON.
                 delta_pass = pass_rate - prev_it["pass_rate_percent"]
                 if delta_pass > 0:
                     improvements.append(f"Pass rate improved by +{delta_pass:.1f}% ({prev_it['passed_specs']} -> {eval_res['passed_specs']} specs passed).")
+                    try:
+                        cue = f"Unsatisfied specs on {part_name}: {[e['symbol'] for e in eval_res.get('spec_evaluations', []) if not e.get('passed')][:4]}"
+                        lesson = synth_res.get("architecture_summary", "Evolved circuit topology and parameter sizing.")
+                        evidence = f"Pass rate improved from {prev_it['pass_rate_percent']:.1f}% to {pass_rate:.1f}%."
+                        self.harness2_architect.library.record_experience(
+                            task_id=part_name,
+                            category=dut_category,
+                            cue=cue,
+                            lesson=lesson,
+                            evidence=evidence,
+                            tree=active_harness_tree,
+                            score_before=prev_it["pass_rate_percent"],
+                            score_after=pass_rate
+                        )
+                    except Exception as le:
+                        logger.warning(f"Could not record experience to library: {le}")
                 if prev_it.get("simulation_errors") and not eval_res.get("simulation_errors"):
                     improvements.append("Resolved prior SPICE compiler / syntax errors completely.")
                 prev_passed = set(prev_it.get("passed_symbols", []))
@@ -575,12 +675,12 @@ Return ONLY valid JSON.
 
         if final_eval:
             for ev in final_eval.get("spec_evaluations", []):
-                sym = ev["symbol"]
-                min_t = ev.get("min_target")
+                sym = ev.get("symbol", "param")
+                min_t = ev.get("min_target") if ev.get("min_target") is not None else ev.get("min")
                 min_str = f"{min_t:.4g}" if min_t is not None else "-"
-                typ_t = ev.get("typ_target")
+                typ_t = ev.get("typ_target") if ev.get("typ_target") is not None else ev.get("typ")
                 typ_str = f"{typ_t:.4g}" if typ_t is not None else "-"
-                max_t = ev.get("max_target")
+                max_t = ev.get("max_target") if ev.get("max_target") is not None else ev.get("max")
                 max_str = f"{max_t:.4g}" if max_t is not None else "-"
                 meas = ev.get("measured")
                 meas_str = f"{meas:.4g}" if meas is not None else "N/A"

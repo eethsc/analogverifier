@@ -717,6 +717,10 @@ class StudioRequestHandler(SimpleHTTPRequestHandler):
               <span class="text-slate-500">Cross-Task Transfer:</span>
               <span class="text-indigo-400 font-semibold" id="harness2ExpCount">3 Lessons Cached</span>
             </div>
+            <div class="flex items-center justify-between">
+              <span class="text-slate-500">Dynamic Verifier:</span>
+              <span class="text-emerald-400 font-semibold">Fourier THD+N &amp; Math Engine</span>
+            </div>
           </div>
 
           <!-- Experience Library Viewer Container -->
