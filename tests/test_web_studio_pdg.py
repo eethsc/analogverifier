@@ -47,8 +47,10 @@ def main():
     args = ap.parse_args()
     os.makedirs(SHOTS, exist_ok=True)
 
+    log_path = os.path.join(SHOTS, "studio_server.log")
+    log_file = open(log_path, "w", encoding="utf-8")
     srv = subprocess.Popen([sys.executable, "-X", "utf8", "run_studio.py", "--port", str(args.port), "--no-open"],
-                           cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                           cwd=ROOT, stdout=log_file, stderr=subprocess.STDOUT, text=True)
     base = f"http://127.0.0.1:{args.port}"
     try:
         assert wait_server(base + "/api/samples"), "studio server did not start"
@@ -62,6 +64,14 @@ def main():
             page.goto(base, wait_until="networkidle")
             expect(page.locator("#sampleSelect option")).to_have_count(12, timeout=15000)  # placeholder + 11 ICs
             expect(page.locator("#pdgPreviewCard")).to_be_hidden()
+            expect(page.locator("#harness2StudioCard")).to_be_visible()
+            
+            # Verify Harness2 Library loaded experiences
+            page.wait_for_selector("#harness2ExpContainer div", timeout=10000)
+            exp_count = page.locator("#harness2ExpContainer div").count()
+            print(f"[browser] Harness2 library loaded {exp_count} experience cards")
+            assert exp_count >= 1, "Harness2 experience cards not rendered"
+
             page.screenshot(path=os.path.join(SHOTS, "01_home.png"), full_page=True)
 
             # switch to sample mode first (the select is hidden in upload mode), then pick the IC by label
@@ -92,6 +102,18 @@ def main():
             print(f"[api] /api/extract_pdg outside root -> HTTP {bad.status}")
             assert bad.status == 400, "path sandbox failed"
 
+            # harness2 API checks
+            h2_summary = page.request.get(f"{base}/api/harness2/summary")
+            assert h2_summary.status == 200, f"/api/harness2/summary failed: {h2_summary.status}"
+            h2_data = h2_summary.json()
+            print(f"[api] /api/harness2/summary -> status={h2_data.get('status')}, entries={len(h2_data.get('summary', []))}")
+
+            h2_lib = page.request.get(f"{base}/api/harness2/library")
+            assert h2_lib.status == 200, f"/api/harness2/library failed: {h2_lib.status}"
+            lib_data = h2_lib.json()
+            print(f"[api] /api/harness2/library -> status={lib_data.get('status')}, count={lib_data.get('count')}")
+            assert lib_data.get('count', 0) >= 1, "harness2 library should have cached lessons"
+
             if args.generate:
                 page.locator("#maxItersSelect").select_option(str(args.generate))
                 page.click("#btnGenerate")
@@ -116,6 +138,10 @@ def main():
             srv.wait(timeout=10)
         except Exception:
             srv.kill()
+        try:
+            log_file.close()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
