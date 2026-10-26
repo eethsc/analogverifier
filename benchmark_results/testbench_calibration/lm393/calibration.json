@@ -1815,6 +1815,20 @@
         "m_vol": 0.0960934319137
       }
     },
+    "iol_a0cadb": {
+      "key": "iol_a0cadb",
+      "kind": "cmp_iol",
+      "title": "comparator IOL @VOL=1.5 VS=5.0",
+      "deck_path": "benchmark_results/testbench_calibration\\lm393\\tb_iol_a0cadb.cir",
+      "metrics": {
+        "iol": 2.02798593876
+      },
+      "error": null,
+      "raw": {
+        "options": 7.0,
+        "m_i": -2.02798593876
+      }
+    },
     "iq_c82511": {
       "key": "iq_c82511",
       "kind": "cmp_icc",
@@ -1830,18 +1844,19 @@
         "m_ipos": -0.000316032709064
       }
     },
-    "iol_a0cadb": {
-      "key": "iol_a0cadb",
-      "kind": "cmp_iol",
-      "title": "comparator IOL @VOL=1.5 VS=5.0",
-      "deck_path": "benchmark_results/testbench_calibration\\lm393\\tb_iol_a0cadb.cir",
+    "iq_726545": {
+      "key": "iq_726545",
+      "kind": "cmp_icc",
+      "title": "comparator ICC VS=30.0",
+      "deck_path": "benchmark_results/testbench_calibration\\lm393\\tb_iq_726545.cir",
       "metrics": {
-        "iol": 2.02798593876
+        "iq": 0.00139594637848,
+        "iq_total": 0.00139594637848
       },
       "error": null,
       "raw": {
         "options": 7.0,
-        "m_i": -2.02798593876
+        "m_ipos": -0.00139594637848
       }
     },
     "avd_db_6da1e9": {
@@ -1871,21 +1886,6 @@
       "raw": {
         "options": 7.0,
         "m_vin": 0.000405330151201
-      }
-    },
-    "iq_726545": {
-      "key": "iq_726545",
-      "kind": "cmp_icc",
-      "title": "comparator ICC VS=30.0",
-      "deck_path": "benchmark_results/testbench_calibration\\lm393\\tb_iq_726545.cir",
-      "metrics": {
-        "iq": 0.00139594637848,
-        "iq_total": 0.00139594637848
-      },
-      "error": null,
-      "raw": {
-        "options": 7.0,
-        "m_ipos": -0.00139594637848
       }
     },
     "tresp_2dcff0": {

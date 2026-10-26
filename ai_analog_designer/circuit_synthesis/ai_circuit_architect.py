@@ -124,32 +124,23 @@ Your task is to synthesize from scratch a complete, highly realistic, physically
 3. MUST synthesize the complete internal circuit architecture:
    - Input stages, bias current mirrors, internal amplifiers/VCO/charge pumps, frequency compensation, output drivers, and feedback networks.
    - Sizing of MOSFETs (W/L) and passives (R, C, L) MUST be analytically calculated to satisfy the specified timings, frequencies, voltages, and currents.
-4. STRICT SPICE SYNTAX & COMPONENT RULES:
-   - For transistors: Use standard `M... d g s b <model> W=... L=...`, `Q... c b e <model>`, `D... a c <model>`, `R... n1 n2 <val>`, `C... n1 n2 <val>`.
-   - For behavioral modeling: ALWAYS use standard SPICE behavioral sources:
-     * Voltage: `B<name> <pos> <neg> V = {{ <expr> }}` or `E<name> <pos> <neg> VALUE = {{ <expr> }}`
-     * Current: `B<name> <pos> <neg> I = {{ <expr> }}` or `G<name> <pos> <neg> VALUE = {{ <expr> }}`
-   - STRICTLY PROHIBITED: DO NOT use non-standard pseudo devices such as `A_xxx` or `.model xxx logic(...)` or `.model xxx Schmitt(...)`. These cause fatal SPICE compilation errors. Use standard MOSFET inverters, Schmitt trigger subcircuits, or `B...` behavioral sources!
-   - In B-source expressions `{{ ... }}`, use single `&` for logical AND and single `|` for logical OR. NEVER use `&&` or `||`!
-   - B-sources MUST evaluate a SINGLE mathematical expression (e.g. `B1 out 0 V = {{ (sin(2*pi*f*time) > 0) ? 3.3 : 0 }}`). NEVER write procedural multi-variable code like `{{ a = 1 b = 2 c }}` inside a B-source! If you need intermediate values, define separate B-sources for each intermediate node or inline them.
-   - Charge pumps (CP) driving loop filters MUST be modeled as CURRENT sources: `B_cp n_ctrl gnd I = {{ <expr> }}`, NOT voltage sources! Ideal voltage sources driving capacitors or referencing their own node voltage cause Singular Matrix errors in SPICE.
-   - NEVER write self-referential behavioral sources: e.g. B1 X 0 V = {{ (cond) ? val : V(X) }}. SPICE cannot compute the DC operating point of an unbuffered self-loop and crashes with 'Singular matrix: check node X'.
-   - HOW TO MODEL MIXED-SIGNAL LATCHES / SAMPLE-AND-HOLD:
-     Use an ideal voltage-controlled switch S_sw and capacitor C_hold with a leak resistor:
-     S_sample IN HOLD_NODE CTRL 0 S_MODEL
-     C_sample HOLD_NODE 0 10p
-     R_sample HOLD_NODE 0 1G
-     E_buffer OUT 0 HOLD_NODE 0 1
-   - HOW TO MODEL DIGITAL TIMERS / ONE-SHOT DELAYS (e.g. BUSY pulse):
-     Do NOT write ddt(V(signal)) or 	ime - V(t_start)! Use an RC timing ramp:
-     R_time TRIG T_NODE 10k
-     C_time T_NODE 0 27p
-     B_busy BUSY 0 V = {{ (V(T_NODE) > 1.65) ? 3.3 : 0 }}
-   - HOW TO MODEL MULTI-BIT ADC/DAC CONVERSION:
-     Compute digital bits algebraically directly from analog input voltage:
-     B_code CODE 0 V = {{ min(16383, max(0, floor(V(IN) / V(VREF) * 16384))) }}
-     Then compute bit voltages e.g. B_db13 DB13_INT 0 V = {{ ((floor(V(CODE)/8192)) % 2 > 0.5) ? 3.3 : 0 }}
-   - Every device instance name (M1, M2, R1, B1, etc.) must be strictly UNIQUE within each subcircuit.
+4. STRICT PHYSICAL ANALOG IMPLEMENTATION MANDATE (NO BEHAVIORAL SOURCES):
+   - Every circuit MUST be physically implemented using real analog components:
+     * Transistors: MOSFET `M... d g s b <model> W=... L=...`, BJT `Q... c b e <model>`, JFET `J... d g s <model>`.
+     * Diodes: `D... a c <model>`.
+     * Passives: Resistors `R... n1 n2 <val>`, Capacitors `C... n1 n2 <val>`, Inductors `L... n1 n2 <val>`.
+     * Subcircuits: `X... <nodes...> <subcircuit_name>`.
+   - STRICTLY PROHIBITED (INSTANT VALIDATION FAILURE):
+     * ABSOLUTELY NO Behavioral sources (`B<name> ...`, `Bxxx`, `V=if(...)`, `I=if(...)`, `table(...)`, `laplace(...)`).
+     * ABSOLUTELY NO Digital logic / pseudo-devices (`A_xxx`, `.model xxx logic(...)`, `.model xxx Schmitt(...)`).
+     * ABSOLUTELY NO Arbitrary behavioral value sources (`E/G ... VALUE={...}`).
+     * This project designs circuits at the true transistor/component level. Mathematical shortcuts or behavioral equations are strictly forbidden!
+   - CIRCUIT DESIGN GUIDELINES:
+     * Amplification: Differential pairs (M1/M2 or Q1/Q2) loaded with current mirrors (M3/M4 or Q3/Q4) and second gain stages with Miller compensation (Cc, Rz).
+     * Voltage References: Bandgap cores (scaled BJTs Q1/Q2 with delta-Vbe across resistor) or diode-drop divider chains.
+     * Comparators / Switching: High-gain differential input stage with push-pull transistor output stage.
+     * Oscillators / Clocking: Transistor-based ring oscillators, multivibrators, or physical LC/RC tank oscillators.
+   - Every device instance name (M1, M2, R1, Q1, C1, etc.) must be strictly UNIQUE within each subcircuit.
    - For mid-line comments, use `;` (semicolon), NOT `*`.
    - DO NOT include `.global` or `.temp` inside `.subckt`.
    - NEVER write simulation commands (`.tran`, `.ac`, `.op`, `.dc`) inside a subcircuit!
@@ -164,8 +155,7 @@ Your task is to synthesize from scratch a complete, highly realistic, physically
    - NEVER nest `.subckt` blocks. Define helper subcircuits FIRST at top level, then `.subckt {subckt_name}` LAST.
    - Line continuation is a leading `+` on the next line. NEVER end a line with `\\`.
    - NEVER write prose, ellipses or "repeat N times" inside the netlist. Write every device explicitly, or use `M=` / `m=` multiplicity.
-   - Behavioral sources: `B... n+ n- V={{expr}}` or `E... n+ n- VALUE={{expr}}` (exactly two nodes before V=/VALUE=).
-     Do NOT use `freq`, `TEMP`, `temp_nom` or other undefined names inside expressions; use `.param` for every constant.
+   - Pure Physical Circuitry: Every device must be an R, C, L, D, Q, M, J, or X subcircuit call. Do not use B-sources or A-devices.
    - Every `.param` you reference must be defined in the same file. Subcircuit parameters must be written as `PARAMS: a=1 b=2` on the `.subckt` line.
    - Noise sources, temperature coefficients and drift models are NOT needed: omit them.
    - The design must reach a DC operating point with V- = 0 V and V+ = the test supply, all inputs at mid-supply.

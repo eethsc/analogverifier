@@ -3079,32 +3079,42 @@
         "m_ipos": -0.00340000000001
       }
     },
-    "aol_db_ae2f11": {
-      "key": "aol_db_ae2f11",
-      "kind": "opamp_ol",
-      "title": "open-loop AC DM VS=15.0",
-      "deck_path": "benchmark_results/testbench_calibration\\lm358_vs_lm741\\tb_aol_db_ae2f11.cir",
+    "ios_d75f14": {
+      "key": "ios_d75f14",
+      "kind": "opamp_dc",
+      "title": "follower DC: VOS/IB/IOS/IQ VS=15.0",
+      "deck_path": "benchmark_results/testbench_calibration\\lm358_vs_lm741\\tb_ios_d75f14.cir",
       "metrics": {
-        "aol_db": 107.43715724,
-        "gbw": 1010250.69737,
-        "pm": 64.265731932
+        "vos": -0.00100002739852,
+        "ib": 7.999799997275e-08,
+        "ios": 2.0000027453300004e-08,
+        "iq_total": 0.00340000000001,
+        "iq": 0.001700000000005
       },
       "error": null,
       "raw": {
         "options": 7.0,
         "gmin": 0.0,
-        "m_a0_db": 107.43715724,
-        "m_a0_mag": 235427.86380852878,
-        "m_a0_phase": -1.2092467962,
-        "m_a0": 107.43715724,
-        "m_a0_at": 0.1,
-        "m_ugf": 1010250.69737,
-        "m_ugf_value": 1.0,
-        "m_ph_db": 0.0,
-        "m_ph_mag": 1.0,
-        "m_ph_phase": -115.734268068,
-        "m_ph": 0.0,
-        "m_ph_at": 1010250.69737
+        "m_out": -0.00100002739852,
+        "m_mid": 0.0,
+        "m_isp": 8.99980136994e-08,
+        "m_isn": 6.99979862461e-08,
+        "m_ipos": -0.00340000000001
+      }
+    },
+    "en_665d57": {
+      "key": "en_665d57",
+      "kind": "opamp_noise",
+      "title": "input noise density VS=15.0",
+      "deck_path": "benchmark_results/testbench_calibration\\lm358_vs_lm741\\tb_en_665d57.cir",
+      "metrics": {
+        "en": 0.0214225958059
+      },
+      "error": null,
+      "raw": {
+        "options": 7.0,
+        "gmin": 0.0,
+        "m_en": 2.14225958059e-11
       }
     },
     "aol_db_90f6b5": {
@@ -3135,42 +3145,32 @@
         "m_ph_at": 1010250.69737
       }
     },
-    "en_665d57": {
-      "key": "en_665d57",
-      "kind": "opamp_noise",
-      "title": "input noise density VS=15.0",
-      "deck_path": "benchmark_results/testbench_calibration\\lm358_vs_lm741\\tb_en_665d57.cir",
+    "aol_db_ae2f11": {
+      "key": "aol_db_ae2f11",
+      "kind": "opamp_ol",
+      "title": "open-loop AC DM VS=15.0",
+      "deck_path": "benchmark_results/testbench_calibration\\lm358_vs_lm741\\tb_aol_db_ae2f11.cir",
       "metrics": {
-        "en": 0.0214225958059
+        "aol_db": 107.43715724,
+        "gbw": 1010250.69737,
+        "pm": 64.265731932
       },
       "error": null,
       "raw": {
         "options": 7.0,
         "gmin": 0.0,
-        "m_en": 2.14225958059e-11
-      }
-    },
-    "ios_d75f14": {
-      "key": "ios_d75f14",
-      "kind": "opamp_dc",
-      "title": "follower DC: VOS/IB/IOS/IQ VS=15.0",
-      "deck_path": "benchmark_results/testbench_calibration\\lm358_vs_lm741\\tb_ios_d75f14.cir",
-      "metrics": {
-        "vos": -0.00100002739852,
-        "ib": 7.999799997275e-08,
-        "ios": 2.0000027453300004e-08,
-        "iq_total": 0.00340000000001,
-        "iq": 0.001700000000005
-      },
-      "error": null,
-      "raw": {
-        "options": 7.0,
-        "gmin": 0.0,
-        "m_out": -0.00100002739852,
-        "m_mid": 0.0,
-        "m_isp": 8.99980136994e-08,
-        "m_isn": 6.99979862461e-08,
-        "m_ipos": -0.00340000000001
+        "m_a0_db": 107.43715724,
+        "m_a0_mag": 235427.86380852878,
+        "m_a0_phase": -1.2092467962,
+        "m_a0": 107.43715724,
+        "m_a0_at": 0.1,
+        "m_ugf": 1010250.69737,
+        "m_ugf_value": 1.0,
+        "m_ph_db": 0.0,
+        "m_ph_mag": 1.0,
+        "m_ph_phase": -115.734268068,
+        "m_ph": 0.0,
+        "m_ph_at": 1010250.69737
       }
     },
     "gbw_88eb93": {
@@ -3178,6 +3178,34 @@
       "kind": "opamp_ol",
       "title": "open-loop AC DM VS=15.0",
       "deck_path": "benchmark_results/testbench_calibration\\lm358_vs_lm741\\tb_gbw_88eb93.cir",
+      "metrics": {
+        "aol_db": 107.43715724,
+        "gbw": 1010250.69737,
+        "pm": 64.265731932
+      },
+      "error": null,
+      "raw": {
+        "options": 7.0,
+        "gmin": 0.0,
+        "m_a0_db": 107.43715724,
+        "m_a0_mag": 235427.86380852878,
+        "m_a0_phase": -1.2092467962,
+        "m_a0": 107.43715724,
+        "m_a0_at": 0.1,
+        "m_ugf": 1010250.69737,
+        "m_ugf_value": 1.0,
+        "m_ph_db": 0.0,
+        "m_ph_mag": 1.0,
+        "m_ph_phase": -115.734268068,
+        "m_ph": 0.0,
+        "m_ph_at": 1010250.69737
+      }
+    },
+    "pm_9f89c1": {
+      "key": "pm_9f89c1",
+      "kind": "opamp_ol",
+      "title": "open-loop AC DM VS=15.0",
+      "deck_path": "benchmark_results/testbench_calibration\\lm358_vs_lm741\\tb_pm_9f89c1.cir",
       "metrics": {
         "aol_db": 107.43715724,
         "gbw": 1010250.69737,
@@ -3218,34 +3246,6 @@
         "m_out": 5.99700149926,
         "m_vp": 7.50000000001,
         "m_vn": -7.50000000001
-      }
-    },
-    "pm_9f89c1": {
-      "key": "pm_9f89c1",
-      "kind": "opamp_ol",
-      "title": "open-loop AC DM VS=15.0",
-      "deck_path": "benchmark_results/testbench_calibration\\lm358_vs_lm741\\tb_pm_9f89c1.cir",
-      "metrics": {
-        "aol_db": 107.43715724,
-        "gbw": 1010250.69737,
-        "pm": 64.265731932
-      },
-      "error": null,
-      "raw": {
-        "options": 7.0,
-        "gmin": 0.0,
-        "m_a0_db": 107.43715724,
-        "m_a0_mag": 235427.86380852878,
-        "m_a0_phase": -1.2092467962,
-        "m_a0": 107.43715724,
-        "m_a0_at": 0.1,
-        "m_ugf": 1010250.69737,
-        "m_ugf_value": 1.0,
-        "m_ph_db": 0.0,
-        "m_ph_mag": 1.0,
-        "m_ph_phase": -115.734268068,
-        "m_ph": 0.0,
-        "m_ph_at": 1010250.69737
       }
     },
     "sr_ee65cf": {
@@ -3291,21 +3291,21 @@
         "m_vn": -7.50000000001
       }
     },
-    "vswing_637f26": {
-      "key": "vswing_637f26",
+    "vswing_7d03f5": {
+      "key": "vswing_7d03f5",
       "kind": "opamp_swing",
-      "title": "output swing neg rail RL=7500 VS=15.0",
-      "deck_path": "benchmark_results/testbench_calibration\\lm358_vs_lm741\\tb_vswing_637f26.cir",
+      "title": "output swing pos rail RL=1500 VS=15.0",
+      "deck_path": "benchmark_results/testbench_calibration\\lm358_vs_lm741\\tb_vswing_7d03f5.cir",
       "metrics": {
-        "vol": -5.94059405941,
-        "vswing": 1.5594059405999996,
-        "headroom_neg": 1.5594059405999996
+        "voh": 5.71428571429,
+        "vswing": 1.7857142857200001,
+        "headroom_pos": 1.7857142857200001
       },
       "error": null,
       "raw": {
         "options": 7.0,
         "gmin": 0.0,
-        "m_out": -5.94059405941,
+        "m_out": 5.71428571429,
         "m_vp": 7.50000000001,
         "m_vn": -7.50000000001
       }
@@ -3329,21 +3329,21 @@
         "m_vn": -7.50000000001
       }
     },
-    "vswing_7d03f5": {
-      "key": "vswing_7d03f5",
+    "vswing_637f26": {
+      "key": "vswing_637f26",
       "kind": "opamp_swing",
-      "title": "output swing pos rail RL=1500 VS=15.0",
-      "deck_path": "benchmark_results/testbench_calibration\\lm358_vs_lm741\\tb_vswing_7d03f5.cir",
+      "title": "output swing neg rail RL=7500 VS=15.0",
+      "deck_path": "benchmark_results/testbench_calibration\\lm358_vs_lm741\\tb_vswing_637f26.cir",
       "metrics": {
-        "voh": 5.71428571429,
-        "vswing": 1.7857142857200001,
-        "headroom_pos": 1.7857142857200001
+        "vol": -5.94059405941,
+        "vswing": 1.5594059405999996,
+        "headroom_neg": 1.5594059405999996
       },
       "error": null,
       "raw": {
         "options": 7.0,
         "gmin": 0.0,
-        "m_out": 5.71428571429,
+        "m_out": -5.94059405941,
         "m_vp": 7.50000000001,
         "m_vn": -7.50000000001
       }
@@ -3365,21 +3365,6 @@
         "m_out": -0.992555831265,
         "m_vp": 2.5,
         "m_vn": -2.5
-      }
-    },
-    "iout_890675": {
-      "key": "iout_890675",
-      "kind": "opamp_iout",
-      "title": "output current at VO=neg rail VS=15.0",
-      "deck_path": "benchmark_results/testbench_calibration\\lm358_vs_lm741\\tb_iout_890675.cir",
-      "metrics": {
-        "iout": 0.0173333333334
-      },
-      "error": null,
-      "raw": {
-        "options": 7.0,
-        "gmin": 0.0,
-        "m_i": 0.0173333333334
       }
     },
     "iout_a18135": {
@@ -3412,6 +3397,21 @@
         "m_i": -0.02
       }
     },
+    "iout_890675": {
+      "key": "iout_890675",
+      "kind": "opamp_iout",
+      "title": "output current at VO=neg rail VS=15.0",
+      "deck_path": "benchmark_results/testbench_calibration\\lm358_vs_lm741\\tb_iout_890675.cir",
+      "metrics": {
+        "iout": 0.0173333333334
+      },
+      "error": null,
+      "raw": {
+        "options": 7.0,
+        "gmin": 0.0,
+        "m_i": 0.0173333333334
+      }
+    },
     "isc_c41630": {
       "key": "isc_c41630",
       "kind": "opamp_isc",
@@ -3428,11 +3428,11 @@
         "m_isc": 0.113333333333
       }
     },
-    "iq_0fe276": {
-      "key": "iq_0fe276",
+    "iq_d104a3": {
+      "key": "iq_d104a3",
       "kind": "opamp_dc",
-      "title": "follower DC: VOS/IB/IOS/IQ VS=36.0",
-      "deck_path": "benchmark_results/testbench_calibration\\lm358_vs_lm741\\tb_iq_0fe276.cir",
+      "title": "follower DC: VOS/IB/IOS/IQ VS=5.0",
+      "deck_path": "benchmark_results/testbench_calibration\\lm358_vs_lm741\\tb_iq_d104a3.cir",
       "metrics": {
         "vos": -0.00100002739852,
         "ib": 7.999799997275e-08,
@@ -3451,11 +3451,11 @@
         "m_ipos": -0.00340000000001
       }
     },
-    "iq_d104a3": {
-      "key": "iq_d104a3",
+    "iq_0fe276": {
+      "key": "iq_0fe276",
       "kind": "opamp_dc",
-      "title": "follower DC: VOS/IB/IOS/IQ VS=5.0",
-      "deck_path": "benchmark_results/testbench_calibration\\lm358_vs_lm741\\tb_iq_d104a3.cir",
+      "title": "follower DC: VOS/IB/IOS/IQ VS=36.0",
+      "deck_path": "benchmark_results/testbench_calibration\\lm358_vs_lm741\\tb_iq_0fe276.cir",
       "metrics": {
         "vos": -0.00100002739852,
         "ib": 7.999799997275e-08,
