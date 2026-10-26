@@ -13,7 +13,7 @@ import logging
 from typing import Dict, Any, List, Optional, Tuple
 import numpy as np
 
-from agent_engine.ltspice_runner import LTspiceRunner
+from .ltspice_runner import LTspiceRunner
 from ai_analog_designer.llm_client import LLMClient
 from .sympy_oracle_engine import SymPyOracleEngine
 

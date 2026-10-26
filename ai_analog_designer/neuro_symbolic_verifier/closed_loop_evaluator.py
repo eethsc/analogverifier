@@ -1,7 +1,7 @@
 import os
 import re
 from typing import Dict, Any, List, Optional
-from agent_engine.ltspice_runner import LTspiceRunner
+from .ltspice_runner import LTspiceRunner
 from .sympy_oracle_engine import SymPyOracleEngine
 
 class ClosedLoopEvaluator:

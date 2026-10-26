@@ -74,3 +74,8 @@ parsebench_repo/
 exported_graph/
 output_*/
 export_*.py
+
+# Testing and scratch
+.pytest_cache/
+turn_*.txt
+scratch_*

@@ -20,7 +20,7 @@ import subprocess
 import concurrent.futures as cf
 from typing import Dict, Any, List, Optional, Tuple
 
-from agent_engine.ltspice_runner import LTSPICE_EXE
+from .ltspice_runner import LTSPICE_EXE
 from .units import spec_limits_in, fmt
 
 
