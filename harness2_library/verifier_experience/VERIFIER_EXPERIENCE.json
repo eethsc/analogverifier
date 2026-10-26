@@ -1,0 +1,140 @@
+{
+  "v1_kind_rules": [
+    {
+      "classes": [
+        "audio_amp",
+        "amplifier"
+      ],
+      "symbol_regex": "^THD\\+?N?$|^D\\b",
+      "name_regex": "total harmonic distortion|distortion\\s*\\+?\\s*noise",
+      "kind": "thd_n",
+      "canonical_unit": "%",
+      "magnitude_compare": true
+    },
+    {
+      "classes": [
+        "audio_amp",
+        "power_stage",
+        "amplifier"
+      ],
+      "symbol_regex": "^P(O|OUT|L)\\b|^P_O$",
+      "name_regex": "continuous output power|output power|power output",
+      "kind": "p_out",
+      "canonical_unit": "W",
+      "magnitude_compare": false
+    },
+    {
+      "classes": [
+        "audio_amp",
+        "timer",
+        "pll",
+        "switching_converter"
+      ],
+      "symbol_regex": "^f(OSC|SW|CLK)\\b|^F_OSC$",
+      "name_regex": "oscillator frequency|switching frequency|clock frequency",
+      "kind": "f_osc",
+      "canonical_unit": "Hz",
+      "magnitude_compare": false
+    },
+    {
+      "classes": [
+        "audio_amp",
+        "power_switch",
+        "ldo",
+        "switching_converter"
+      ],
+      "symbol_regex": "^r(DS\\(on\\)|ON|ds_on)\\b|^RDS\\(ON\\)$",
+      "name_regex": "drain[- ]source on[- ]state resistance|on[- ]resistance",
+      "kind": "rds_on",
+      "canonical_unit": "Ohm",
+      "magnitude_compare": true
+    },
+    {
+      "classes": [
+        "ldo",
+        "regulator",
+        "pmic"
+      ],
+      "symbol_regex": "^V(DO|DROPOUT)$",
+      "name_regex": "dropout voltage",
+      "kind": "v_dropout",
+      "canonical_unit": "V",
+      "magnitude_compare": true
+    },
+    {
+      "classes": [
+        "ldo",
+        "regulator",
+        "pmic"
+      ],
+      "symbol_regex": "^(\u0394V_LINE|LINE_REG)$",
+      "name_regex": "line regulation",
+      "kind": "line_reg",
+      "canonical_unit": "%/V",
+      "magnitude_compare": true
+    },
+    {
+      "classes": [
+        "ldo",
+        "regulator",
+        "pmic"
+      ],
+      "symbol_regex": "^(\u0394V_LOAD|LOAD_REG)$",
+      "name_regex": "load regulation",
+      "kind": "load_reg",
+      "canonical_unit": "%",
+      "magnitude_compare": true
+    }
+  ],
+  "v2_fixture_templates": {
+    "thd_n": "* Pure Physical Analog Audio Fixture for THD / THD+N\n.include \"{dut_netlist_path}\"\nXDUT {dut_pins} {dut_name}\n* Physical Power Supplies\nVPOS {vpos_pin} 0 DC {vsupply_pos}\nVNEG {vneg_pin} 0 DC {vsupply_neg}\n* Physical Pure Analog Sinusoidal Stimulus (1 kHz fundamental)\nVIN_P {inp_pin} 0 SINE(0 {vin_amp} 1k 25u)\nVIN_N {inn_pin} 0 SINE(0 -{vin_amp} 1k 25u)\n* Physical Passive Load Resistor\nRLOAD {outp_pin} {outn_pin} {r_load}\n* Fourier Harmonic Distortion Analysis Directive\n.four 1k 9 V({outp_pin}, {outn_pin})\n.tran 10u 20m 10m\n.meas tran v_rms RMS V({outp_pin}, {outn_pin}) from=15m to=20m\n.meas tran p_out AVG (V({outp_pin})-V({outn_pin}))*I(RLOAD) from=15m to=20m\n.end\n",
+    "f_osc": "* Pure Physical Analog Frequency Fixture\n.include \"{dut_netlist_path}\"\nXDUT {dut_pins} {dut_name}\nVPOS {vpos_pin} 0 DC {vsupply_pos}\nVNEG {vneg_pin} 0 DC {vsupply_neg}\n* External timing capacitor/resistor if required\n.tran 10n 50u 10u\n.meas tran t1 when V({out_pin})=({vsupply_pos}/2) rise=5\n.meas tran t2 when V({out_pin})=({vsupply_pos}/2) rise=6\n.meas tran f_osc param 1/(t2-t1)\n.end\n",
+    "v_dropout": "* Pure Physical Analog LDO Dropout Fixture\n.include \"{dut_netlist_path}\"\nXDUT {dut_pins} {dut_name}\n* Input voltage swept down to find saturation / dropout threshold\nVIN {vin_pin} 0 DC {vin_nom}\nRLOAD {vout_pin} 0 {r_load}\n.dc VIN {vin_nom} 0.5 -0.05\n.meas dc v_dropout find (V({vin_pin})-V({vout_pin})) when V({vout_pin})=({vout_nom}*0.98)\n.end\n"
+  },
+  "v3_unit_conversions": {
+    "nV/rtHz": {
+      "canonical": "V/rtHz",
+      "factor": 1e-09
+    },
+    "uV/rtHz": {
+      "canonical": "V/rtHz",
+      "factor": 1e-06
+    },
+    "%/V": {
+      "canonical": "percent_per_volt",
+      "factor": 1.0
+    },
+    "ppm/C": {
+      "canonical": "ppm_per_degc",
+      "factor": 1.0
+    },
+    "mOhm": {
+      "canonical": "Ohm",
+      "factor": 0.001
+    },
+    "mohm": {
+      "canonical": "Ohm",
+      "factor": 0.001
+    },
+    "W": {
+      "canonical": "W",
+      "factor": 1.0
+    },
+    "mW": {
+      "canonical": "W",
+      "factor": 0.001
+    },
+    "kHz": {
+      "canonical": "Hz",
+      "factor": 1000.0
+    },
+    "MHz": {
+      "canonical": "Hz",
+      "factor": 1000000.0
+    },
+    "dBm": {
+      "canonical": "dBm",
+      "factor": 1.0
+    }
+  }
+}

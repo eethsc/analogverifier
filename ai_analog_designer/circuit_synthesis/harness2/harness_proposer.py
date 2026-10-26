@@ -61,6 +61,7 @@ class Harness2Proposer:
         sys_prompt = """You are an Expert Harness² Meta-Architect for Analog SPICE Circuit Synthesis.
 Your goal is to optimize the execution harness (System Prompt, Guardrails, Memory, Tool Guidance)
 surrounding an AI circuit designer.
+STRICT ANALOG RULE: Behavioral constructs (LTspice `B` sources `Bxxx`, `V=if(...)`, `table(...)`, `laplace(...)`, `VALUE={...}`, or digital `A` devices) are STRICTLY FORBIDDEN. Every circuit and blueprint must use physical transistor-level analog circuits (BJTs `Q`, MOSFETs `M`, JFETs `J`, Diodes `D`, and passive `R`/`C`/`L`).
 Given simulation diagnostics from the latest iteration, propose concrete, targeted updates to the harness.
 Never output prose or chat; return ONLY a JSON structure defining the edits.
 """

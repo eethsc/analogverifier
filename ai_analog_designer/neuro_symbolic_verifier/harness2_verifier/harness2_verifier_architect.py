@@ -67,12 +67,20 @@ class Harness2VerifierArchitect:
     ) -> List[Dict[str, Any]]:
         """Identifies specs marked as unsupported or lacking physical fixtures."""
         unsupported = []
-        plan_rows = {r.get("symbol"): r for r in spec_plan.get("rows", [])}
+        items = spec_plan.get("items") or spec_plan.get("rows") or []
+        if items:
+            seen_syms = set()
+            for idx, it in enumerate(items):
+                st = it.get("status") or it.get("result") or ""
+                if st in ("UNSUPPORTED_KIND", "NO_FIXTURE"):
+                    sym = it.get("symbol")
+                    if sym and sym not in seen_syms:
+                        seen_syms.add(sym)
+                        spec_obj = specifications[idx] if idx < len(specifications) else it
+                        unsupported.append(spec_obj)
+            return unsupported
         for s in specifications:
-            sym = s.get("symbol")
-            p_row = plan_rows.get(sym)
-            if not p_row or p_row.get("result") in ("UNSUPPORTED_KIND", "NO_FIXTURE") or p_row.get("kind") is None:
-                unsupported.append(s)
+            unsupported.append(s)
         return unsupported
 
     def evolve_verifier_for_specs(

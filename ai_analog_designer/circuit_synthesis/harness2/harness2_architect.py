@@ -134,6 +134,8 @@ The subcircuit must work with its negative supply pin tied to 0 V (single supply
 
         netlist_code = ""
         m_net = re.search(r'<spice_netlist>(.*?)</spice_netlist>', raw_resp, re.DOTALL | re.IGNORECASE)
+        if not m_net:
+            m_net = re.search(r'<spice_netlist>(.*)', raw_resp, re.DOTALL | re.IGNORECASE)
         if m_net:
             netlist_code = m_net.group(1).strip()
         else:

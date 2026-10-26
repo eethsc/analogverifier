@@ -35,8 +35,22 @@ class PDGVisualizer:
         parsed_doc = parser.parse_pdf(pdf_path)
 
         kg_builder = HardwareKnowledgeGraphBuilder()
-        hkg = kg_builder.build_kg_from_parsed_pdf(parsed_doc)
-        raw_extraction = hkg.graph.get("raw_extraction", {})
+        stem = os.path.splitext(os.path.basename(pdf_path))[0].lower()
+        auto_cache = os.path.abspath(os.path.join("output_interactive", ".hkg_cache", f"{stem}_hkg.json"))
+        if os.path.exists(auto_cache):
+            with open(auto_cache, "r", encoding="utf-8") as f:
+                raw_extraction = json.load(f)
+            hkg = kg_builder._json_to_networkx_graph(raw_extraction)
+            hkg.graph["parsed_pages"] = PDFDatasheetParser.audit_pages(parsed_doc)
+        else:
+            hkg = kg_builder.build_kg_from_parsed_pdf(parsed_doc)
+            raw_extraction = hkg.graph.get("raw_extraction", {})
+            try:
+                os.makedirs(os.path.dirname(auto_cache), exist_ok=True)
+                with open(auto_cache, "w", encoding="utf-8") as f:
+                    json.dump(raw_extraction, f, indent=2)
+            except Exception:
+                pass
 
         extractor = PortDependencyGraphExtractor()
         pdg, schedule, levels = extractor.extract_pdg(hkg)

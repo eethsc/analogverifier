@@ -37,7 +37,7 @@ class GoldenOracleAnchor:
         Returns (netlist_content, subckt_name, pin_order) for the canonical golden model of a given class.
         """
         device_class = device_class.lower()
-        if device_class in ("comparator", "lm393"):
+        if any(k in device_class for k in ("comparator", "lm393", "lm293", "lm193", "lm2903")):
             p = os.path.join(LTLIB, "LM393.sub")
             if os.path.exists(p):
                 with open(p, "r", encoding="utf-8", errors="ignore") as f:
@@ -50,7 +50,7 @@ class GoldenOracleAnchor:
                 )
                 return content + wrapper, "DUT", pins
 
-        elif device_class in ("timer", "ne555"):
+        elif any(k in device_class for k in ("timer", "ne555", "lm555")):
             p = os.path.join(LTLIB, "NE555.sub")
             if os.path.exists(p):
                 with open(p, "r", encoding="utf-8", errors="ignore") as f:
@@ -63,7 +63,7 @@ class GoldenOracleAnchor:
                 )
                 return content + wrapper, "DUT", pins
 
-        elif device_class in ("opamp", "lm741", "lm358"):
+        elif any(k in device_class for k in ("opamp", "op-amp", "operational", "amplifier", "lm741", "lm358")):
             p = os.path.join(self.models_dir, "lm741_macromodel.sub")
             if os.path.exists(p):
                 with open(p, "r", encoding="utf-8", errors="ignore") as f:
@@ -76,7 +76,7 @@ class GoldenOracleAnchor:
                 )
                 return content + wrapper, "DUT", pins
 
-        elif device_class in ("ldo", "regulator", "lp2985"):
+        elif any(k in device_class for k in ("ldo", "regulator", "lp2985", "lm317", "reference", "tl431")):
             p = os.path.join(self.models_dir, "ti_lp2985_transistor.sub")
             if os.path.exists(p):
                 with open(p, "r", encoding="utf-8", errors="ignore") as f:

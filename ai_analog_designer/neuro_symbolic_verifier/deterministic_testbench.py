@@ -932,11 +932,44 @@ def ltspice_errors(log_text: str) -> List[str]:
 
 
 def compile_check(netlist: str, plan: Dict[str, Any], out_dir: str, dut_name: Optional[str] = None,
-                  vs: Optional[float] = None) -> Dict[str, Any]:
+                  vs: Optional[float] = None, strict_analog: bool = True) -> Dict[str, Any]:
     """Single .op of the DUT with every pin tied to ground through 1 GOhm and the supply applied.
     Fails fast on syntax / compile / operating-point problems so 50+ fixtures are not run on a broken netlist."""
     os.makedirs(out_dir, exist_ok=True)
     name, pins = subckt_header(netlist, dut_name)
+    if strict_analog and (dut_name or "").upper() != "DUT":
+        analog_errs = []
+        transistor_count = 0
+        for raw_ln in netlist.splitlines():
+            s = raw_ln.strip()
+            if not s or s.startswith(("*", ";", ".", "+")):
+                continue
+            first_tok = s.split()[0].upper()
+            if first_tok.startswith(("Q", "M", "J")):
+                transistor_count += 1
+            if first_tok.startswith("B"):
+                analog_errs.append(
+                    f"STRICT_ANALOG_VIOLATION: Behavioral B-source '{first_tok}' is prohibited | {s}"
+                )
+            elif first_tok.startswith("A"):
+                analog_errs.append(
+                    f"STRICT_ANALOG_VIOLATION: LTspice digital/behavioral A-device '{first_tok}' is prohibited | {s}"
+                )
+            elif re.search(r"\b(?:value\s*=\s*\{|v\s*=\s*if\s*\(|i\s*=\s*if\s*\(|table\s*\(|laplace\s*=)", s, re.I):
+                analog_errs.append(
+                    f"STRICT_ANALOG_VIOLATION: Behavioral expression is prohibited; use physical transistors/passives | {s}"
+                )
+        expected_order = (plan.get("pin_map") or {}).get("pin_order") or []
+        if expected_order and len(pins) != len(expected_order):
+            analog_errs.append(
+                f"Subcircuit pin count mismatch: header has {len(pins)} pins {pins}, expected {len(expected_order)} pins {expected_order}"
+            )
+        if transistor_count < 2:
+            analog_errs.append(
+                f"STRICT_ANALOG_VIOLATION: Subcircuit contains only {transistor_count} active transistor(s) (Q/M/J). Must synthesize a complete physical transistor-level topology."
+            )
+        if analog_errs:
+            return {"ok": False, "errors": analog_errs[:12], "path": None}
     pm = plan.get("pin_map", {})
     vs = vs or plan.get("vs_default") or 5.0
     nodes = [f"n_{re.sub(r'[^A-Za-z0-9_]', '_', p.replace('+', 'p').replace('-', 'n'))}" for p in pins]
@@ -1066,6 +1099,11 @@ def evaluate(plan: Dict[str, Any], results: Dict[str, Dict[str, Any]], deck_erro
         else:
             lo, hi, typ = lim["min"], lim["max"], lim["typ"]
         row["measured"] = val
+        if kind in ("iq", "iq_total") and abs(val) < 1e-12:
+            row["result"] = "FAIL"
+            row["diagnostic"] = f"{kind}: measured {fmt(val, unit)} (< 1 pA) indicates disconnected/unbiased supply rail"
+            rows.append(row)
+            continue
         if lo is None and hi is None and typ is None:
             row["result"] = "NO_NUMERIC_LIMIT"; rows.append(row); continue
         if lo is None and hi is None:

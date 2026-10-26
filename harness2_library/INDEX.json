@@ -27,7 +27,35 @@
       "cue": "Unsatisfied specs on TL431: ['Vref', 'VI(dev)', 'VI(dev)', 'ΔVref/ΔVKA']",
       "delta": 40.0,
       "path": "voltage_reference\\TL431"
+    },
+    {
+      "task_id": "LM393B",
+      "category": "comparator",
+      "cue": "Unsatisfied specs on LM393B: ['VCC', 'VCC', 'VID', 'VID']",
+      "delta": 58.2,
+      "path": "comparator\\LM393B"
+    },
+    {
+      "task_id": "LM393B",
+      "category": "comparator",
+      "cue": "Unsatisfied specs on LM393B: ['VCC', 'VCC', 'VID', 'VID']",
+      "delta": 58.2,
+      "path": "comparator\\LM393B"
+    },
+    {
+      "task_id": "LM393B",
+      "category": "comparator",
+      "cue": "Unsatisfied specs on LM393B: ['VCC', 'VCC', 'VID', 'VID']",
+      "delta": 20.5,
+      "path": "comparator\\LM393B"
+    },
+    {
+      "task_id": "LM393B",
+      "category": "comparator",
+      "cue": "Unsatisfied specs on LM393B: ['VCC', 'VCC', 'VID', 'VID']",
+      "delta": 20.5,
+      "path": "comparator\\LM393B"
     }
   ],
-  "count": 4
+  "count": 8
 }
