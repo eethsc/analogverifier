@@ -73,6 +73,11 @@ flowchart LR
 | **TL431**<br/>([`tl431.json`](benchmarks/pdg_groundtruth/tl431.json), 6개 스펙) | *40.0 %*<br/>*(착시 수치)* | ❌ **0.0 % (0/6)**<br/>`PDG_STAGE0_TOPOLOGY`: 내부 독립 전압원(`Vbias 2.5V`), 미선언 `VCC`, 글로벌 노드 `0` 직접 누설 | ✅ **100.0 % (6/6)**<br/>*(Hard-limit: 100.0%)* | ✅ **100.0 % (5/5 종)**<br/>*(`vref`, `dvref_dvka`, `iref`, `imin`, `ioff` 전수 통과)* | 순수 3핀(`CATHODE`, `REF`, `ANODE`) 내부 $V_{BE}$ 스케일링 오차 증폭기 + PNP 감지단 + 달링턴 NPN 캐소드 션트 드라이버 ([`TL431_FINAL_HARNESS2.cir`](output_harness2_netlist/TL431_FINAL_HARNESS2.cir)) |
 | **LM358**<br/>([`lm358.json`](benchmarks/pdg_groundtruth/lm358.json), 31개 스펙) | *25.0 %*<br/>*(착시 수치)* | ❌ **0.0 % (0/31)**<br/>`PDG_STAGE0_TOPOLOGY`: 출력 MOSFET 게이트가 `V+`/`V-`에 직결되어 입력-출력 신호 경로 단절 | ✅ **100.0 % (31/31)**<br/>*(Hard-limit: 100.0%)* | ✅ **100.0 % (14/14 종)**<br/>*(`vos`, `ib`, `ios`, `iq`, `aol_db`, `gbw`, `pm`, `cmrr_db`, `psrr_db`, `sr`, `vswing`, `iout`, `isc`, `en` 전수 통과)* | PNP 차동 입력단 + NPN 미러 + 달링턴 버퍼 밀러 보상 2단($C_c=34\text{ pF}, R_z=250\text{ }\Omega$) + Class-AB 출력단 + `Q13` 정전류 풀다운 싱크 ([`LM358_FINAL_HARNESS2.cir`](output_harness2_netlist/LM358_FINAL_HARNESS2.cir)) |
 
+> ⚠️ **[투명성 공개 및 연구적 의미] 오픈 모델 독자 합성의 현실과 엔지니어 직접 물리 디버깅의 역할**
+> - **오픈 모델의 실제 합성 능력**: 현재 상용·오픈소스 LLM(`nvidia/nemotron-3-ultra-550b-a55b` 등)에게 프롬프트만으로 트랜지스터 수준 아날로그 회로를 합성하도록 맡겼을 때의 실제 결과는, 위 표의 '과거 넷리스트'에서 보듯 **PDG 4단계 인과 게이트 기준 전 소자 0.0% 차단**이었습니다. 소자 값의 스케일($\Omega$ vs $\text{M}\Omega$) 오판, 독립 전원 삽입, 신호선 단절 등의 회로적 결함을 LLM 혼자서 통제하지 못했습니다.
+> - **이번 98.9% ~ 100.0% 넷리스트의 실체**: 따라서 이번에 PDG 게이트를 통과한 최종 물리 BJT 넷리스트들은 **오픈 모델이 단독으로 자동 합성한 결과가 아니며, AI 코딩 에이전트(인공지능 어시스턴트)가 아날로그 회로 수식(Shockley 다이오드 방정식, Gummel-Poon $I_S, \beta, V_{AF}$, 에미터 면적 비례, 음전원 포화 방지 루프 등)을 직접 계산하고 디버깅하여 넷리스트를 재구축한 결과**입니다.
+> - **Dual-Harness² 프레임워크에서의 가치**: 이렇게 물리적으로 검증된 정밀 BJT 넷리스트는 [`EXPERIENCE.json`](harness2_library/comparator/LM393B/EXPERIENCE.json)의 `c1_system_prompt`, `c3_memory`, `c5_skills`에 "골든 블루프린트"로 등록됩니다. 이를 통해 향후 자율 루프에서 오픈 모델이 엉뚱한 결함 회로를 재합성하지 않고 올바른 물리적 참조 구조를 인출(Retrieval)할 수 있도록 진화 지식 베이스를 구축했습니다.
+
 ---
 
 ## 🏗️ 시스템 아키텍처: Dual-Harness² ($C_1\sim C_8$ & $V_1\sim V_3$) 구조
