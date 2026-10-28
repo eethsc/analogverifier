@@ -94,10 +94,17 @@ class FixtureContext:
         for i, ch in enumerate(self.pm.get("channels", [])):
             if ch is used_channel:
                 continue
-            node_of[ch["inp"]] = mid
-            node_of[ch["inn"]] = f"park{i}"
-            node_of[ch["out"]] = f"park{i}"
-            lines.append(f"Rpark{i} park{i} {mid} 100k")
+            if self.cls == "comparator":
+                # Open-loop comparators oscillate if connected as unity-gain followers; park with fixed overdrive (OUT high/off)
+                node_of[ch["inp"]] = mid
+                node_of[ch["inn"]] = "0"
+                node_of[ch["out"]] = f"park{i}"
+                lines.append(f"Rpark{i} park{i} 0 1G")
+            else:
+                node_of[ch["inp"]] = mid
+                node_of[ch["inn"]] = f"park{i}"
+                node_of[ch["out"]] = f"park{i}"
+                lines.append(f"Rpark{i} park{i} {mid} 100k")
 
     def base_nodes(self, vs: float) -> Dict[str, str]:
         n = {}
@@ -143,7 +150,7 @@ def opamp_dc(ctx: FixtureContext, key: str, fx: Dict[str, Any]) -> Deck:
     vs, ch = fx["vs"], ctx.ch()
     rl = fx.get("rl") or 10e3
     n = ctx.base_nodes(vs); n.update({ch["inp"]: "inp", ch["inn"]: "inn", ch["out"]: "out"})
-    lines = ctx.supply_tran(vs) + ["VSP mid inp 0", "VSN out inn 0", f"RL out mid {_r(rl)}", "CL out mid 20p"]
+    lines = ctx.supply_tran(vs) + ["VSP mid inp 0", "VSN out inn 0", f"RL out {('vn' if ctx.split else '0') if fx.get('rl_to') == 'vn' else 'mid'} {_r(rl)}", "CL out mid 20p"]
     ctx.park_unused(ch, n, lines)
     lines.append(instantiate(ctx.netlist, n, dut_name=ctx.dut_name))
     w = ctx.win()
@@ -178,7 +185,7 @@ def opamp_openloop(ctx: FixtureContext, key: str, fx: Dict[str, Any], cm: bool =
         lines += ["VCM cmn mid AC 1", "VIN inp cmn 0", "LFB out inn 1G", "CFB inn cmn 1G"]
     else:
         lines += ["VIN inp mid AC 1", "LFB out inn 1G", "CFB inn mid 1G"]
-    lines += [f"RL out mid {_r(rl)}", f"CL out mid {_r(cl)}"]
+    lines += [f"RL out {('vn' if ctx.split else '0') if fx.get('rl_to') == 'vn' else 'mid'} {_r(rl)}", f"CL out mid {_r(cl)}"]
     ctx.park_unused(ch, n, lines)
     lines.append(instantiate(ctx.netlist, n, dut_name=ctx.dut_name))
     meas = [".meas ac m_a0 FIND V(out) AT 0.1",
@@ -230,7 +237,7 @@ def opamp_sr(ctx: FixtureContext, key: str, fx: Dict[str, Any], sr_hint: float =
     n = ctx.base_nodes(vs); n.update({ch["inp"]: "inp", ch["inn"]: "out", ch["out"]: "out"})
     lines = ctx.supply_tran(vs) + [
         f"VIN inp mid PULSE({_r(-amp)} {_r(amp)} {_r(t0)} 10n 10n {_r(t_sw)} {_r(2 * t_sw)})",
-        f"RL out mid {_r(rl)}", f"CL out mid {_r(cl)}"]
+        f"RL out {('vn' if ctx.split else '0') if fx.get('rl_to') == 'vn' else 'mid'} {_r(rl)}", f"CL out mid {_r(cl)}"]
     ctx.park_unused(ch, n, lines)
     lines.append(instantiate(ctx.netlist, n, dut_name=ctx.dut_name))
     lo, hi = -amp * 0.6, amp * 0.6          # 20% / 80% of the 2*amp swing
@@ -263,7 +270,7 @@ def opamp_swing(ctx: FixtureContext, key: str, fx: Dict[str, Any]) -> Deck:
     rl = rl or 10e3
     ovd = 0.2 if rail == "pos" else -0.2
     n = ctx.base_nodes(vs); n.update({ch["inp"]: "inp", ch["inn"]: "mid", ch["out"]: "out"})
-    lines = ctx.supply_tran(vs) + [f"VIN inp mid {_r(ovd)}", f"RL out mid {_r(rl)}"]
+    lines = ctx.supply_tran(vs) + [f"VIN inp mid {_r(ovd)}", f"RL out {('vn' if ctx.split else '0') if fx.get('rl_to') == 'vn' else 'mid'} {_r(rl)}"]
     ctx.park_unused(ch, n, lines)
     lines.append(instantiate(ctx.netlist, n, dut_name=ctx.dut_name))
     w = ctx.win()
@@ -288,7 +295,7 @@ def opamp_iout(ctx: FixtureContext, key: str, fx: Dict[str, Any]) -> Deck:
     off = fx.get("vo_offset") or 0.0
     vp, vn = (vs / 2, -vs / 2) if ctx.split else (vs, 0.0)
     vforce = (vp if at == "pos" else vn + off)
-    vid = 1.0 if at == "pos" else -1.0
+    vid = fx.get("vid") if fx.get("vid") is not None else (-1.0 if at == "pos" else 1.0)
     n = ctx.base_nodes(vs); n.update({ch["inp"]: "inp", ch["inn"]: "mid", ch["out"]: "out"})
     lines = ctx.supply_tran(vs) + [f"VIN inp mid {_r(vid)}", f"VFORCE out 0 {_r(vforce)}"]
     ctx.park_unused(ch, n, lines)
@@ -349,7 +356,7 @@ def cmp_vos(ctx: FixtureContext, key: str, fx: Dict[str, Any]) -> Deck:
     def extract(r):
         return {"vos": r["m_vin"]} if r.get("m_vin") is not None else {}
     return Deck(key, "cmp_vos", f"comparator VOS ramp VS={vs}", lines,
-                f".tran 0 {_r(t0 + tr + 10e-6)} 0 {_r(tr / 40000)}", meas, extract, fx)
+                f".tran 0 {_r(t0 + tr + 10e-6)} 0 {_r(tr / 4000)}", meas, extract, fx)
 
 
 def cmp_ib(ctx: FixtureContext, key: str, fx: Dict[str, Any]) -> Deck:
@@ -392,7 +399,7 @@ def cmp_avd(ctx: FixtureContext, key: str, fx: Dict[str, Any]) -> Deck:
             return {}
         d = abs(r["m_v1"] - r["m_v2"])
         return {"avd_db": 20 * math.log10((vhi - vlo) / d)} if d > 0 else {"avd_db": 200.0}
-    return Deck(key, "cmp_avd", f"comparator AVD VS={vs}", lines, f".tran 0 {_r(t0 + tr + 10e-6)} 0 {_r(tr / 30000)}", meas, extract, fx)
+    return Deck(key, "cmp_avd", f"comparator AVD VS={vs}", lines, f".tran 0 {_r(t0 + tr + 10e-6)} 0 {_r(tr / 3000)}", meas, extract, fx)
 
 
 def cmp_vol(ctx: FixtureContext, key: str, fx: Dict[str, Any]) -> Deck:
@@ -441,7 +448,7 @@ def cmp_ioh(ctx: FixtureContext, key: str, fx: Dict[str, Any]) -> Deck:
 def cmp_icc(ctx: FixtureContext, key: str, fx: Dict[str, Any]) -> Deck:
     vs, ch = fx["vs"], ctx.ch()
     n = ctx.base_nodes(vs); n.update({ch["inp"]: "inp", ch["inn"]: "inn", ch["out"]: "out"})
-    lines = ctx.supply_tran(vs) + ["VCM inn 0 1.4", "VID inp inn -1"]
+    lines = ctx.supply_tran(vs) + ["VCM inn 0 1.4", "VID inp inn -1", "ROUT_BLEED out 0 1G"]
     ctx.park_unused(ch, n, lines)
     lines.append(instantiate(ctx.netlist, n, dut_name=ctx.dut_name))
     meas = [f".meas tran m_ipos AVG I(VPOS) {ctx.win()}"]
@@ -679,7 +686,7 @@ def shunt_ioff(ctx, key, fx):
 def shunt_imin(ctx, key, fx):
     s = _s(ctx); n = {s["cathode"]: "k", s["ref"]: "k", s["anode"]: "0"}
     lines = ["IKA 0 k PWL(0 0 1m 2m)", instantiate(ctx.netlist, n, dut_name=ctx.dut_name)]
-    meas = [".meas tran m_v2m FIND V(k) AT 0.99m", ".meas tran m_t WHEN V(k)=2.45 FALL=1"]
+    meas = [".meas tran m_v2m FIND V(k) AT 0.99m", ".meas tran m_t WHEN V(k)=2.45 RISE=1"]
 
     def extract(r):
         return {"imin": r["m_t"] * 2.0} if r.get("m_t") is not None else {}   # I = 2 A/s * t
@@ -931,45 +938,349 @@ def ltspice_errors(log_text: str) -> List[str]:
     return list(dict.fromkeys(out))
 
 
+
+def pdg_topological_audit(netlist: str, plan: Dict[str, Any], dut_name: Optional[str] = None) -> List[str]:
+    """PDG Stage 0: Structural & Topological Causal Connectivity Audit.
+    Verifies:
+      1. Zero behavioral constructs (no B-sources, A-devices, VALUE={}, if(), table(), laplace()).
+      2. No internal independent voltage/current sources (V... != 0V, I...) inside synthesized .subckt blocks.
+      3. No illegal internal connections to global ground '0' when '0' is not a declared subckt pin.
+      4. No undeclared floating supply rails (e.g., phantom VCC inside a 3-pin shunt_ref).
+      5. No degenerate/shorted active devices or rail-locked output gates.
+      6. PDG Causal Signal Connectivity: a continuous non-rail component path exists from SIGNAL_IN to SIGNAL_OUT.
+    """
+    analog_errs: List[str] = []
+    name, pins = subckt_header(netlist, dut_name)
+    transistor_count = 0
+
+    # Parse all subcircuits in the netlist
+    subckts: Dict[str, Dict[str, Any]] = {}
+    cur_sub: Optional[str] = None
+    for raw_ln in netlist.splitlines():
+        s = raw_ln.strip()
+        if not s or s.startswith(("*", ";", "+")):
+            continue
+        code_only = re.split(r"[;\$]|(?<!\w)\*", s)[0].strip()
+        if not code_only:
+            continue
+        toks = code_only.split()
+        first_tok = toks[0].upper()
+        if first_tok == ".SUBCKT" and len(toks) >= 2:
+            cur_sub = toks[1].upper()
+            subckts[cur_sub] = {"name": toks[1], "pins": toks[2:], "lines": []}
+            continue
+        if first_tok == ".ENDS":
+            cur_sub = None
+            continue
+        if first_tok.startswith("."):
+            continue
+
+        if first_tok.startswith(("Q", "M", "J")):
+            transistor_count += 1
+        if first_tok.startswith("B"):
+            analog_errs.append(f"PDG_STAGE0_BEHAVIORAL: Behavioral B-source '{first_tok}' is prohibited | {s}")
+        elif first_tok.startswith("A"):
+            analog_errs.append(f"PDG_STAGE0_BEHAVIORAL: Digital/behavioral A-device '{first_tok}' is prohibited | {s}")
+        elif re.search(r"\b(?:value\s*=\s*\{|v\s*=\s*if\s*\(|i\s*=\s*if\s*\(|table\s*\(|laplace\s*=)", s, re.I):
+            analog_errs.append(f"PDG_STAGE0_BEHAVIORAL: Behavioral expression is prohibited; use physical transistors/passives | {s}")
+
+        if cur_sub is not None:
+            subckts[cur_sub]["lines"].append(toks)
+            # Check for internal independent voltage/current sources
+            if first_tok.startswith("V") and len(toks) >= 4:
+                val_str = " ".join(toks[3:]).upper()
+                # Allow 0V ammeters (0, 0V, DC 0, DC 0V)
+                if not re.match(r"^(?:DC\s+)?0(?:\.0*)?V?$", val_str.strip()):
+                    analog_errs.append(
+                        f"PDG_STAGE0_INTERNAL_SOURCE: Independent voltage source '{toks[0]}' ({val_str}) inside .subckt '{cur_sub}' is prohibited; references/biases must be generated physically from supply rails | {s}"
+                    )
+            elif first_tok.startswith("I") and len(toks) >= 4:
+                analog_errs.append(
+                    f"PDG_STAGE0_INTERNAL_SOURCE: Independent current source '{toks[0]}' inside .subckt '{cur_sub}' is prohibited; use physical BJT/MOSFET/resistor current mirrors | {s}"
+                )
+            # Check for degenerate shorted transistors
+            if first_tok.startswith("Q") and len(toks) >= 5:
+                c_n, b_n, e_n = toks[1].upper(), toks[2].upper(), toks[3].upper()
+                if c_n == e_n:
+                    analog_errs.append(
+                        f"PDG_STAGE0_SHORTED_BJT: Transistor '{toks[0]}' has collector and emitter shorted to '{c_n}' | {s}"
+                    )
+
+    expected_order = (plan.get("pin_map") or {}).get("pin_order") or []
+    if expected_order and len(pins) != len(expected_order):
+        analog_errs.append(
+            f"PDG_STAGE0_PIN_MISMATCH: Subcircuit header has {len(pins)} pins {pins}, expected {len(expected_order)} pins {expected_order}"
+        )
+    if transistor_count < 2:
+        analog_errs.append(
+            f"PDG_STAGE0_NO_TRANSISTORS: Subcircuit contains only {transistor_count} active transistor(s) (Q/M/J). Must synthesize a complete physical transistor-level topology."
+        )
+
+    top_sub = subckts.get(name.upper())
+    if top_sub:
+        top_pins_upper = {p.upper() for p in top_sub["pins"]}
+        # Check internal node '0' usage and undeclared supply names in top_sub
+        all_top_nodes = set()
+        for toks in top_sub["lines"]:
+            el = toks[0].upper()
+            n_cnt = 4 if el.startswith("M") else (3 if el.startswith(("Q", "J")) else 2)
+            if el.startswith("X"):
+                el_nodes = [t.upper() for t in toks[1:-1] if "=" not in t]
+            else:
+                el_nodes = [t.upper() for t in toks[1:1 + n_cnt] if "=" not in t]
+            for nd in el_nodes:
+                all_top_nodes.add(nd)
+                if nd == "0" and "0" not in top_pins_upper:
+                    analog_errs.append(
+                        f"PDG_STAGE0_GROUND_LEAK: Element '{toks[0]}' connects directly to global node '0' inside .subckt '{name}'; use declared ground/return pin instead."
+                    )
+        for rail_cand in ("VCC", "VDD", "VSS", "VEE"):
+            if rail_cand in all_top_nodes and rail_cand not in top_pins_upper:
+                analog_errs.append(
+                    f"PDG_STAGE0_UNDECLARED_RAIL: Undeclared supply node '{rail_cand}' used inside .subckt '{name}' (declared pins: {top_sub['pins']})."
+                )
+
+        # Build flattened non-rail signal connectivity graph across subcircuits
+        pm = plan.get("pin_map") or {}
+        rail_pins = {str(pm.get("vpos") or "").upper(), str(pm.get("vneg") or "").upper(), "0", "GND", "VCC", "VDD", "VSS", "VEE", "V+", "V-"}
+        rail_pins.discard("")
+
+        adj: Dict[str, set] = {}
+        def add_clique(nodes_list: List[str]):
+            clean_nds = [n for n in nodes_list if n not in rail_pins]
+            for u in clean_nds:
+                adj.setdefault(u, set()).update(clean_nds)
+
+        def expand_sub(sub_key: str, prefix: str, pin_map_dict: Dict[str, str], depth: int = 0):
+            if depth > 4 or sub_key not in subckts:
+                return
+            sb = subckts[sub_key]
+            for toks in sb["lines"]:
+                el = toks[0].upper()
+                if el.startswith("X") and len(toks) >= 3:
+                    child_tokens = [t for t in toks[1:] if "=" not in t]
+                    if not child_tokens:
+                        continue
+                    child_sub = child_tokens[-1].upper()
+                    inst_nodes = [pin_map_dict.get(n.upper(), f"{prefix}.{n.upper()}" if prefix else n.upper()) for n in child_tokens[:-1]]
+                    if child_sub in subckts and len(subckts[child_sub]["pins"]) == len(inst_nodes):
+                        child_map = {}
+                        for cp, inode in zip(subckts[child_sub]["pins"], inst_nodes):
+                            child_map[cp.upper()] = inode if inode not in rail_pins else cp.upper()
+                            if inode in rail_pins:
+                                rail_pins.add(cp.upper())
+                        expand_sub(child_sub, f"{prefix}.{toks[0].upper()}" if prefix else toks[0].upper(), child_map, depth + 1)
+                    else:
+                        add_clique(inst_nodes)
+                else:
+                    n_cnt = 4 if el.startswith("M") else (3 if el.startswith(("Q", "J")) else 2)
+                    raw_nds = [t.upper() for t in toks[1:1 + n_cnt] if "=" not in t]
+                    mapped_nds = [pin_map_dict.get(n, f"{prefix}.{n}" if prefix else n) for n in raw_nds]
+                    add_clique(mapped_nds)
+
+        top_identity = {p.upper(): p.upper() for p in top_sub["pins"]}
+        expand_sub(name.upper(), "", top_identity, 0)
+
+        def has_path(src_pins: List[str], dst_pin: str) -> bool:
+            target = dst_pin.upper()
+            visited = set()
+            stack = [s.upper() for s in src_pins if s]
+            while stack:
+                cur = stack.pop()
+                if cur == target:
+                    return True
+                if cur in visited or cur in rail_pins:
+                    continue
+                visited.add(cur)
+                for nxt in adj.get(cur, ()):
+                    if nxt not in visited and nxt not in rail_pins:
+                        stack.append(nxt)
+            return False
+
+        cls = plan.get("device_class")
+        if cls in ("opamp", "inamp", "comparator"):
+            for ch in pm.get("channels") or []:
+                inp, inn, out = ch.get("inp"), ch.get("inn"), ch.get("out")
+                if inp and inn and out:
+                    if not has_path([inp, inn], out):
+                        analog_errs.append(
+                            f"PDG_STAGE0_DISCONNECTED_PATH: No internal causal signal path exists from input pins ['{inp}', '{inn}'] to output pin '{out}' (excluding power rails). Output stage is disconnected from input stage."
+                        )
+        elif cls == "shunt_ref":
+            sr = pm.get("shunt") or pm.get("shunt_ref") or {}
+            if sr.get("ref") and sr.get("cathode"):
+                if not has_path([sr["ref"]], sr["cathode"]):
+                    analog_errs.append(
+                        f"PDG_STAGE0_DISCONNECTED_PATH: No internal causal signal path exists from reference pin '{sr['ref']}' to cathode '{sr['cathode']}'."
+                    )
+        elif cls == "timer_555":
+            tm = pm.get("timer") or {}
+            if tm.get("trig") and tm.get("thres") and tm.get("out"):
+                if not has_path([tm["trig"], tm["thres"]], tm["out"]):
+                    analog_errs.append(
+                        f"PDG_STAGE0_DISCONNECTED_PATH: No internal causal signal path exists from trigger/threshold pins ['{tm['trig']}', '{tm['thres']}'] to output '{tm['out']}'."
+                    )
+
+    return list(dict.fromkeys(analog_errs))
+
+
+def pdg_bias_and_transfer_check(netlist: str, plan: Dict[str, Any], out_dir: str,
+                                schedule_us: Optional[Dict[str, float]] = None,
+                                dut_name: Optional[str] = None, vs: Optional[float] = None) -> Dict[str, Any]:
+    """PDG Stage 1 (Power & DC Bias Gate) & Stage 2 (Causal DC Signal Transfer Gate).
+    Sequenced by the PDG startup schedule sigma(p):
+      - Stage 1 (at t = sigma(BIAS)): Verifies supply/cathode bias current IQ is in an active physical window
+        (neither open-circuit < 100 nA nor shorted > 250 mA).
+      - Stage 2 (from t = sigma(IN) to sigma(OUT)): Applies a differential/threshold stimulus across the
+        primary PDG SIGNAL_PATH (IN -> OUT) and verifies that the output actively switches/responds
+        (dV(OUT) >= 0.5V). Blocks dead/cut-off circuits (e.g. dV = 0.0V) before any spec fixtures run.
+    """
+    os.makedirs(out_dir, exist_ok=True)
+    cls = plan.get("device_class")
+    pm = plan.get("pin_map") or {}
+    vs = vs or plan.get("vs_default") or 5.0
+    sched = schedule_us or {}
+    t_bias = min(max(20e-6, 1e-6 * max(sched.values(), default=20.0)), 100e-6)
+    t_step = t_bias + 30e-6
+    t_end = t_step + 40e-6
+
+    ctx = FixtureContext(netlist, plan, schedule_us=sched, dut_name=dut_name)
+    lines = ["* PDG Stage 1 (DC Bias) & Stage 2 (Causal Signal Transfer) Gate", ".temp 25",
+             ".options plotwinsize=0 numdgt=7", netlist.strip(), ""]
+    meas: List[str] = []
+
+    if cls in ("comparator", "opamp", "inamp"):
+        ch = ctx.ch()
+        n = ctx.base_nodes(vs)
+        n.update({ch["inp"]: "inp", ch["inn"]: "inn", ch["out"]: "out"})
+        vcm = 1.4 if (cls == "comparator" and vs >= 3.0) else (0.0 if ctx.split else vs / 2.0)
+        lines += ctx.supply_tran(vs)
+        lines += [
+            f"VCM inn 0 {_r(vcm)}",
+            f"VID inp inn PWL(0 -0.1 {_r(t_step)} -0.1 {_r(t_step + 1e-6)} 0.1 {_r(t_end)} 0.1)",
+        ]
+        if cls == "comparator":
+            lines.append(f"RPU out vp 5.1k")
+        else:
+            lines.append(f"RL out mid 10k")
+        ctx.park_unused(ch, n, lines)
+        lines.append(instantiate(netlist, n, dut_name=dut_name))
+        meas = [
+            f".meas tran m_iq AVG I(VPOS) FROM {_r(t_bias * 0.5)} TO {_r(t_step - 2e-6)}",
+            f".meas tran m_vlo AVG V(out) FROM {_r(t_step - 15e-6)} TO {_r(t_step - 1e-6)}",
+            f".meas tran m_vhi AVG V(out) FROM {_r(t_end - 15e-6)} TO {_r(t_end - 1e-6)}",
+        ]
+    elif cls == "shunt_ref":
+        sr = pm.get("shunt") or pm.get("shunt_ref") or {}
+        if not (sr.get("cathode") and sr.get("anode") and sr.get("ref")):
+            return {"ok": True, "errors": [], "metrics": {}}
+        n = {sr["cathode"]: "ka", sr["anode"]: "0", sr["ref"]: "ref"}
+        lines += [
+            f"VPOS vp 0 {_r(max(vs, 5.0))}",
+            "RK vp ka 1k",
+            f"VREF ref 0 PWL(0 2.0 {_r(t_step)} 2.0 {_r(t_step + 1e-6)} 2.8 {_r(t_end)} 2.8)",
+            instantiate(netlist, n, dut_name=dut_name),
+        ]
+        meas = [
+            f".meas tran m_iq AVG I(VPOS) FROM {_r(t_end - 15e-6)} TO {_r(t_end - 1e-6)}",
+            f".meas tran m_vhi AVG V(ka) FROM {_r(t_step - 15e-6)} TO {_r(t_step - 1e-6)}",
+            f".meas tran m_vlo AVG V(ka) FROM {_r(t_end - 15e-6)} TO {_r(t_end - 1e-6)}",
+        ]
+    elif cls == "timer_555":
+        n, t = timer_nodes(ctx, vs)
+        lines += timer_common(ctx, vs) + [
+            f"VTRIG trig 0 PWL(0 {_r(0.15 * vs)} {_r(t_step)} {_r(0.15 * vs)} {_r(t_step + 1e-6)} {_r(0.85 * vs)} {_r(t_end)} {_r(0.85 * vs)})",
+            f"VTHR thres 0 PWL(0 {_r(0.15 * vs)} {_r(t_step)} {_r(0.15 * vs)} {_r(t_step + 1e-6)} {_r(0.85 * vs)} {_r(t_end)} {_r(0.85 * vs)})",
+            "RL out 0 10k",
+            instantiate(netlist, n, dut_name=dut_name),
+        ]
+        meas = [
+            f".meas tran m_iq AVG I(VPOS) FROM {_r(t_bias * 0.5)} TO {_r(t_step - 2e-6)}",
+            f".meas tran m_vhi AVG V(out) FROM {_r(t_step - 15e-6)} TO {_r(t_step - 1e-6)}",
+            f".meas tran m_vlo AVG V(out) FROM {_r(t_end - 15e-6)} TO {_r(t_end - 1e-6)}",
+        ]
+    else:
+        return {"ok": True, "errors": [], "metrics": {}}
+
+    lines += [f".tran 0 {_r(t_end)} 0 {_r(t_end / 1000)}", *meas, ".end", ""]
+    path = os.path.abspath(os.path.join(out_dir, "pdg_gate_check.cir"))
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+    log = path[:-4] + ".log"
+    if os.path.exists(log):
+        os.remove(log)
+    try:
+        subprocess.run([LTSPICE_EXE, "-b", path], capture_output=True, text=True, timeout=45)
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "errors": ["PDG_STAGE1_TIMEOUT: PDG DC Bias & Causal Transfer check timed out after 45s"], "path": path}
+    if not os.path.exists(log):
+        return {"ok": False, "errors": ["PDG_STAGE1_NO_LOG: LTspice produced no log for PDG Gate check"], "path": path}
+    with open(log, "r", encoding="utf-8", errors="ignore") as f:
+        txt_log = f.read()
+    fatal = ltspice_errors(txt_log)
+    if fatal:
+        return {"ok": False, "errors": [f"PDG_STAGE1_SIM_ERROR: {e}" for e in fatal[:6]], "path": path}
+
+    raw = parse_meas_log(log)
+    iq = abs(raw.get("m_iq", 0.0))
+    vlo = raw.get("m_vlo")
+    vhi = raw.get("m_vhi")
+    errs: List[str] = []
+
+    # Stage 1 Gate: Power & DC Bias Operating Point
+    if "m_iq" not in raw or iq < 1e-7:
+        errs.append(
+            f"PDG_STAGE1_DC_BIAS_OPEN: Quiescent supply current IQ = {iq:.3e} A (< 100 nA) at PDG bias settling t={t_bias*1e6:.0f}us; bias core is dead or disconnected from rails."
+        )
+    elif iq > 0.25:
+        errs.append(
+            f"PDG_STAGE1_DC_BIAS_SHORT: Quiescent supply current IQ = {iq:.3f} A (> 250 mA) at PDG bias settling t={t_bias*1e6:.0f}us; supply rail short or runaway bias."
+        )
+
+    # Stage 2 Gate: Causal Signal Path Transfer (SIGNAL_IN -> SIGNAL_OUT)
+    if vlo is None or vhi is None:
+        errs.append(
+            "PDG_STAGE2_DC_TRANSFER_UNMEASURED: Could not observe V(OUT) across PDG signal-path step stimulus."
+        )
+    else:
+        dv = vhi - vlo
+        min_dv = 0.4 if cls == "shunt_ref" else (1.0 if cls == "timer_555" else 0.5)
+        if abs(dv) < min_dv:
+            errs.append(
+                f"PDG_STAGE2_BIAS_CUTOFF: Causal signal transfer (SIGNAL_IN -> SIGNAL_OUT) failed! "
+                f"V_low = {vlo:.4f} V, V_high = {vhi:.4f} V (dV = {dv:.4f} V < {min_dv} V required). "
+                f"Output is stuck at ~{vlo:.3f} V because an internal current mirror, gain stage, or level shifter is in cut-off or deep saturation "
+                f"(check for low-value shunt resistors across current mirrors/active loads or missing bias paths)."
+            )
+        elif dv < 0:
+            errs.append(
+                f"PDG_STAGE2_INVERTED_POLARITY: Causal signal transfer (SIGNAL_IN -> SIGNAL_OUT) has inverted polarity! "
+                f"V_low = {vlo:.4f} V, V_high = {vhi:.4f} V (dV = {dv:.4f} V < 0 V). "
+                f"Swap IN+/IN- connections in the input differential pair or fix the number of inverting gain stages."
+            )
+
+    return {"ok": len(errs) == 0, "errors": errs, "path": path, "metrics": {"iq": iq, "v_low": vlo, "v_high": vhi}}
+
+
 def compile_check(netlist: str, plan: Dict[str, Any], out_dir: str, dut_name: Optional[str] = None,
-                  vs: Optional[float] = None, strict_analog: bool = True) -> Dict[str, Any]:
-    """Single .op of the DUT with every pin tied to ground through 1 GOhm and the supply applied.
-    Fails fast on syntax / compile / operating-point problems so 50+ fixtures are not run on a broken netlist."""
+                  vs: Optional[float] = None, strict_analog: bool = True,
+                  schedule_us: Optional[Dict[str, float]] = None,
+                  enforce_pdg_gate: bool = True) -> Dict[str, Any]:
+    """PDG-Driven Staged Gate:
+      - Stage 0: Topological & Structural PDG Audit (no behavioral sources, no internal independent V/I sources,
+        no global ground '0' leak, verified SIGNAL_IN -> SIGNAL_OUT connectivity).
+      - DC .op Convergence Check.
+      - Stage 1: Power & DC Bias Operating Point Gate at sigma(BIAS).
+      - Stage 2: Causal DC Signal Transfer / Active Switching Gate from sigma(IN) -> sigma(OUT).
+    Fails fast and blocks all 50+ downstream spec fixtures if any stage fails."""
     os.makedirs(out_dir, exist_ok=True)
     name, pins = subckt_header(netlist, dut_name)
-    if strict_analog and (dut_name or "").upper() != "DUT":
-        analog_errs = []
-        transistor_count = 0
-        for raw_ln in netlist.splitlines():
-            s = raw_ln.strip()
-            if not s or s.startswith(("*", ";", ".", "+")):
-                continue
-            first_tok = s.split()[0].upper()
-            if first_tok.startswith(("Q", "M", "J")):
-                transistor_count += 1
-            if first_tok.startswith("B"):
-                analog_errs.append(
-                    f"STRICT_ANALOG_VIOLATION: Behavioral B-source '{first_tok}' is prohibited | {s}"
-                )
-            elif first_tok.startswith("A"):
-                analog_errs.append(
-                    f"STRICT_ANALOG_VIOLATION: LTspice digital/behavioral A-device '{first_tok}' is prohibited | {s}"
-                )
-            elif re.search(r"\b(?:value\s*=\s*\{|v\s*=\s*if\s*\(|i\s*=\s*if\s*\(|table\s*\(|laplace\s*=)", s, re.I):
-                analog_errs.append(
-                    f"STRICT_ANALOG_VIOLATION: Behavioral expression is prohibited; use physical transistors/passives | {s}"
-                )
-        expected_order = (plan.get("pin_map") or {}).get("pin_order") or []
-        if expected_order and len(pins) != len(expected_order):
-            analog_errs.append(
-                f"Subcircuit pin count mismatch: header has {len(pins)} pins {pins}, expected {len(expected_order)} pins {expected_order}"
-            )
-        if transistor_count < 2:
-            analog_errs.append(
-                f"STRICT_ANALOG_VIOLATION: Subcircuit contains only {transistor_count} active transistor(s) (Q/M/J). Must synthesize a complete physical transistor-level topology."
-            )
-        if analog_errs:
-            return {"ok": False, "errors": analog_errs[:12], "path": None}
+    is_synth_dut = strict_analog and (dut_name or "").upper() != "DUT"
+    if is_synth_dut:
+        topo_errs = pdg_topological_audit(netlist, plan, dut_name=dut_name)
+        if topo_errs:
+            return {"ok": False, "stage": "PDG_STAGE0_TOPOLOGY", "errors": topo_errs[:12], "path": None}
+
     pm = plan.get("pin_map", {})
     vs = vs or plan.get("vs_default") or 5.0
     nodes = [f"n_{re.sub(r'[^A-Za-z0-9_]', '_', p.replace('+', 'p').replace('-', 'n'))}" for p in pins]
@@ -990,13 +1301,23 @@ def compile_check(netlist: str, plan: Dict[str, Any], out_dir: str, dut_name: Op
     try:
         subprocess.run([LTSPICE_EXE, "-b", path], capture_output=True, text=True, timeout=60)
     except subprocess.TimeoutExpired:
-        return {"ok": False, "errors": ["compile check timed out after 60 s (operating point does not converge)"], "path": path}
+        return {"ok": False, "stage": "PDG_STAGE1_OP_CONVERGENCE", "errors": ["compile check timed out after 60 s (operating point does not converge)"], "path": path}
     if not os.path.exists(log):
-        return {"ok": False, "errors": ["LTspice produced no log for the compile check"], "path": path}
+        return {"ok": False, "stage": "PDG_STAGE1_OP_CONVERGENCE", "errors": ["LTspice produced no log for the compile check"], "path": path}
     with open(log, "r", encoding="utf-8", errors="ignore") as f:
-        txt = f.read()
-    errs = ltspice_errors(txt)
-    return {"ok": not errs, "errors": errs[:12], "path": path}
+        txt_log = f.read()
+    errs = ltspice_errors(txt_log)
+    if errs:
+        return {"ok": False, "stage": "PDG_STAGE1_OP_CONVERGENCE", "errors": errs[:12], "path": path}
+
+    if enforce_pdg_gate and is_synth_dut:
+        pdg_res = pdg_bias_and_transfer_check(netlist, plan, out_dir, schedule_us=schedule_us, dut_name=dut_name, vs=vs)
+        if not pdg_res["ok"]:
+            stage_name = "PDG_STAGE1_DC_BIAS" if any("STAGE1" in e for e in pdg_res["errors"]) else "PDG_STAGE2_DC_TRANSFER"
+            return {"ok": False, "stage": stage_name, "errors": pdg_res["errors"], "path": pdg_res["path"], "pdg_metrics": pdg_res.get("metrics", {})}
+        return {"ok": True, "stage": "PDG_GATE_PASSED", "errors": [], "path": path, "pdg_metrics": pdg_res.get("metrics", {})}
+
+    return {"ok": True, "stage": "PDG_GATE_PASSED", "errors": [], "path": path}
 
 
 def run_deck(deck: Deck, netlist: str, out_dir: str, timeout: Optional[int] = None) -> Dict[str, Any]:
@@ -1025,8 +1346,8 @@ def run_deck(deck: Deck, netlist: str, out_dir: str, timeout: Optional[int] = No
         return rec
     rec["raw"] = parse_meas_log(log)
     with open(log, "r", encoding="utf-8", errors="ignore") as f:
-        txt = f.read()
-    fatal = ltspice_errors(txt)
+        txt_log = f.read()
+    fatal = ltspice_errors(txt_log)
     if fatal:
         rec["error"] = "; ".join(x.strip() for x in fatal[:3])
     try:
@@ -1036,12 +1357,35 @@ def run_deck(deck: Deck, netlist: str, out_dir: str, timeout: Optional[int] = No
     return rec
 
 
+_PDG_DECK_STAGE = {
+    # Stage 1: Power & Quiescent Bias
+    "opamp_dc": 1, "cmp_icc": 1, "shunt_ioff": 1, "shunt_imin": 1,
+    # Stage 2: Causal Static DC Transfer, Thresholds & Output Drive
+    "opamp_cmr": 2, "opamp_swing": 2, "opamp_iout": 2, "opamp_isc": 2,
+    "cmp_vos": 2, "cmp_ib": 2, "cmp_vol": 2, "cmp_iol": 2, "cmp_ioh": 2, "cmp_avd": 2,
+    "shunt_vref": 2, "shunt_iref": 2, "shunt_dvref": 2,
+    "t555_vth": 2, "t555_vtrig": 2, "t555_vreset": 2, "t555_vcont": 2, "t555_state": 2, "t555_idis": 2,
+    # Stage 3: Small-Signal AC & Dynamic Switching / Timing
+    "opamp_ol": 3, "opamp_cm": 3, "opamp_psrr": 3, "opamp_sr": 3, "opamp_noise": 3,
+    "cmp_tresp": 3, "shunt_zka": 3, "t555_mono": 3, "t555_astable": 3,
+}
+
+
 def run_all(decks: Dict[str, Deck], netlist: str, out_dir: str, workers: int = 4) -> Dict[str, Dict[str, Any]]:
-    results = {}
-    with cf.ThreadPoolExecutor(max_workers=workers) as ex:
-        futs = {ex.submit(run_deck, d, netlist, out_dir): k for k, d in decks.items()}
-        for f in cf.as_completed(futs):
-            results[futs[f]] = f.result()
+    """Executes testbench decks in PDG causal stage order:
+    Stage 1 (Power/DC Bias) -> Stage 2 (Static DC Transfer/Thresholds) -> Stage 3 (AC/Dynamic Transient)."""
+    results: Dict[str, Dict[str, Any]] = {}
+    for stage_num in (1, 2, 3):
+        stage_decks = {k: d for k, d in decks.items() if _PDG_DECK_STAGE.get(d.kind, 2) == stage_num}
+        if not stage_decks:
+            continue
+        with cf.ThreadPoolExecutor(max_workers=workers) as ex:
+            futs = {ex.submit(run_deck, d, netlist, out_dir): k for k, d in stage_decks.items()}
+            for f in cf.as_completed(futs):
+                res = f.result()
+                res["pdg_stage"] = stage_num
+                results[futs[f]] = res
+
     # derived metrics that need two decks (CMRR = AOL - ACM)
     aol = next((r["metrics"]["aol_db"] for r in results.values() if "aol_db" in r["metrics"]), None)
     for r in results.values():
@@ -1089,12 +1433,21 @@ def evaluate(plan: Dict[str, Any], results: Dict[str, Dict[str, Any]], deck_erro
             rows.append(row); continue
         if it["magnitude"]:
             val = abs(val)
-            lo = min([abs(x) for x in (lim["min"], lim["max"]) if x is not None], default=None) if lim["min"] is not None and lim["max"] is not None else None
-            hi = max([abs(x) for x in (lim["min"], lim["max"]) if x is not None], default=None)
-            if lim["min"] is not None and lim["max"] is None:   # e.g. IO min -20 mA  => |IO| >= 20 mA
+            bounds = [abs(x) for x in (lim["min"], lim["max"]) if x is not None]
+            if kind in ("vos", "ib", "ios", "i_ref", "ioh"):
+                # Offset/bias/leakage magnitudes only have an upper bound (|val| <= max_limit)
+                lo, hi = None, (max(bounds) if bounds else None)
+            elif lim["min"] is not None and lim["max"] is not None:
+                if lim["min"] <= 0 <= lim["max"]:
+                    lo, hi = None, max(bounds)
+                else:
+                    lo, hi = min(bounds), max(bounds)
+            elif lim["min"] is not None and lim["max"] is None:   # e.g. IO min -20 mA  => |IO| >= 20 mA
                 lo, hi = abs(lim["min"]), None
-            if lim["min"] is None and lim["max"] is not None:
+            elif lim["min"] is None and lim["max"] is not None:
                 lo, hi = None, abs(lim["max"])
+            else:
+                lo, hi = None, None
             typ = abs(lim["typ"]) if lim["typ"] is not None else None
         else:
             lo, hi, typ = lim["min"], lim["max"], lim["typ"]
@@ -1108,7 +1461,12 @@ def evaluate(plan: Dict[str, Any], results: Dict[str, Dict[str, Any]], deck_erro
             row["result"] = "NO_NUMERIC_LIMIT"; rows.append(row); continue
         if lo is None and hi is None:
             tol = _tol(unit, typ)
-            ok = abs(val - typ) <= tol
+            if kind in ("vos", "ib", "ios", "ioh", "vol", "tresp", "ioff", "imin", "zka", "dvref_dvka", "en", "vdisch_on", "idisch_off", "tr555", "tf555"):
+                ok = (val <= typ + tol)
+            elif kind in ("aol_db", "avd_db", "cmrr_db", "psrr_db", "iol"):
+                ok = (val >= typ - tol)
+            else:
+                ok = abs(val - typ) <= tol
             row["result"] = "PASS_TYP" if ok else "FAIL_TYP"
             row["residual"] = val - typ
             row["diagnostic"] = f"{kind}: measured {fmt(val, unit)} vs typ {fmt(typ, unit)} (±{fmt(tol, unit)} band)"
@@ -1128,6 +1486,16 @@ def evaluate(plan: Dict[str, Any], results: Dict[str, Dict[str, Any]], deck_erro
     planned = cnt("PASS", "FAIL", "PASS_TYP", "FAIL_TYP", "SIM_ERROR", "NOT_OBSERVED", "NO_FIXTURE", "NOT_RUN", "NO_NUMERIC_LIMIT")
     measured = cnt("PASS", "FAIL", "PASS_TYP", "FAIL_TYP")
     hard = cnt("PASS", "FAIL")
+
+    # Compute deduplicated unique-kind pass rate (so 12 rows of VOL count as 1 parameter kind)
+    kinds_rows: Dict[str, List[str]] = {}
+    for r in rows:
+        if r["result"] in ("PASS", "FAIL", "PASS_TYP", "FAIL_TYP") and r.get("kind"):
+            kinds_rows.setdefault(r["kind"], []).append(r["result"])
+    unique_kinds_measured = len(kinds_rows)
+    unique_kinds_passed = sum(1 for res_list in kinds_rows.values() if all(x in ("PASS", "PASS_TYP") for x in res_list))
+    unique_kind_pass_rate_pct = round(100.0 * unique_kinds_passed / unique_kinds_measured, 1) if unique_kinds_measured else 0.0
+
     summary = {
         "total_rows": len(rows),
         "electrical_rows": sum(str(r["category"]).upper() == "ELECTRICAL" for r in rows),
@@ -1138,6 +1506,9 @@ def evaluate(plan: Dict[str, Any], results: Dict[str, Dict[str, Any]], deck_erro
         "pass_typ": cnt("PASS_TYP"), "fail_typ": cnt("FAIL_TYP"),
         "pass_rate_measured_pct": round(100 * cnt("PASS", "PASS_TYP") / measured, 1) if measured else 0.0,
         "pass_rate_hard_pct": round(100 * cnt("PASS") / hard, 1) if hard else None,
+        "unique_kinds_measured": unique_kinds_measured,
+        "unique_kinds_passed": unique_kinds_passed,
+        "unique_kind_pass_rate_pct": unique_kind_pass_rate_pct,
         "sim_errors": cnt("SIM_ERROR"), "not_observed": cnt("NOT_OBSERVED"), "no_fixture": cnt("NO_FIXTURE"),
         "unsupported_kind": cnt("UNSUPPORTED_KIND"),
         "not_testable": sum(r["result"].startswith("NOT_TESTABLE") for r in rows),

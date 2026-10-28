@@ -1,7 +1,9 @@
 import re
 
-from typing import Dict, Any, List, Tuple
-
+from typing import Dict, Any, List, Tuple
+
+
+
 class NetlistValidator:
 
     """
@@ -12,8 +14,10 @@ class NetlistValidator:
 
     duplicate instance deduplication, default models) and detailed diagnostics for LLM re-prompting.
 
-    """
-
+    """
+
+
+
     STANDARD_MODELS = """
 
 * Default Physical Device Models for AI Analog Synthesis
@@ -30,16 +34,22 @@ class NetlistValidator:
 
 .model D_ESD D (IS=1e-15 RS=10 CJO=1p BV=50)
 
-"""
-
+"""
+
+
+
     def __init__(self):
 
-        pass
-
+        pass
+
+
+
     # ------------------------------------------------------------------ structural pre-pass
 
-    _ELEM = re.compile(r"^[RCLMQDJKVIEFGHABXS][A-Za-z0-9_\-\.]*\s+\S", re.I)
-
+    _ELEM = re.compile(r"^[RCLMQDJKVIEFGHABXS][A-Za-z0-9_\-\.]*\s+\S", re.I)
+
+
+
     @classmethod
 
     def normalize_structure(cls, code: str) -> str:
@@ -72,8 +82,10 @@ class NetlistValidator:
 
                 out.append(ln)
 
-        out = [l.rstrip()[:-1] if l.rstrip().endswith("\\") else l for l in out]
-
+        out = [l.rstrip()[:-1] if l.rstrip().endswith("\\") else l for l in out]
+
+
+
         # 2. hoist nested subckts (stack-based)
 
         top: List[str] = []
@@ -134,6 +146,11 @@ class NetlistValidator:
 
                 s = ln.strip()
 
+                # Convert Markdown-mangled hyphen comment lines ("- comment") to SPICE "*" comments
+                if s.startswith("-") and (len(s) == 1 or s[1].isspace() or s.startswith("---")):
+                    fixed.append("* " + s[1:].lstrip())
+                    continue
+
                 # Check for accidental pin declarations like OUT1 OUT1 0 or IN1- IN1- 0
 
                 if re.match(r"^(?:OUT|IN)\d*[\+\-]?\s+(?:OUT|IN)\d*[\+\-]?\b", s, re.I):
@@ -166,8 +183,10 @@ class NetlistValidator:
 
                 top_fixed.append("* " + s)
 
-        return "\n".join(top_fixed) + "\n\n" + "\n\n".join(blocks) + "\n"
-
+        return "\n".join(top_fixed) + "\n\n" + "\n\n".join(blocks) + "\n"
+
+
+
     def _join_multiline_braces(self, text: str) -> str:
 
         """Flattens multiline { ... } expressions into single lines for SPICE compliance."""
@@ -212,8 +231,10 @@ class NetlistValidator:
 
             i += 1
 
-        return '\n'.join(out)
-
+        return '\n'.join(out)
+
+
+
     def sanitize_spice_syntax(self, code: str) -> str:
 
         """Sanitizes common SPICE / LTspice syntax errors and deduplicates instances per subcircuit."""
@@ -254,8 +275,10 @@ class NetlistValidator:
 
             else:
 
-                code = clean_prefix + "\n" + code[idx:]
-
+                code = clean_prefix + "\n" + code[idx:]
+
+
+
         flattened_code = self._join_multiline_braces(code)
 
         # Clean stray continuation operators left inside braces/parens
@@ -266,16 +289,20 @@ class NetlistValidator:
 
         lines = flattened_code.splitlines()
 
-        clean_lines = []
-
+        clean_lines = []
+
+
+
         subckt_scopes = []
 
         scope_instances = set()
 
         scope_v_pairs = set()
 
-        v_decouple_counter = 1
-
+        v_decouple_counter = 1
+
+
+
         for line in lines:
 
             line_str = line.strip()
@@ -284,22 +311,34 @@ class NetlistValidator:
 
                 clean_lines.append("")
 
-                continue
-
-            # Full line comment
+                continue
+
+
+
+            # Full line comment (also convert Markdown-mangled "- comment" lines to SPICE "* comment")
 
             if line_str.startswith("*") or line_str.startswith(";"):
 
                 clean_lines.append(line)
 
-                continue
-
+                continue
+
+            if line_str.startswith("-") and (len(line_str) == 1 or line_str[1].isspace() or line_str.startswith("---")):
+
+                clean_lines.append("* " + line_str[1:].lstrip())
+
+                continue
+
+
+
             # Drop orphaned single brackets or semicolons
 
             if line_str in [")", "}", "]", ";"]:
 
-                continue
-
+                continue
+
+
+
             # Track subckt context; if nested .subckt is encountered, close the prior one with .ends
 
             if line_str.lower().startswith(".subckt"):
@@ -326,8 +365,10 @@ class NetlistValidator:
 
                     scope_instances = set()
 
-                scope_v_pairs = set()
-
+                scope_v_pairs = set()
+
+
+
             # In LTspice, .node is invalid and .global/.temp/.tran/.ac/.op inside .subckt are illegal
 
             if line_str.lower().startswith(".node "):
@@ -340,8 +381,10 @@ class NetlistValidator:
 
                 clean_lines.append(f"* Removed subckt directive: {line_str}")
 
-                continue
-
+                continue
+
+
+
             # Strip inline comments for syntactic token checks
 
             code_only = re.split(r'[;\$]|(?<!\w)\*', line_str)[0].strip()
@@ -350,8 +393,10 @@ class NetlistValidator:
 
             tokens = line_str.split()
 
-            first_tok = tokens[0] if tokens else ""
-
+            first_tok = tokens[0] if tokens else ""
+
+
+
             # Drop accidental pin declaration lines inside body: e.g. OUT1 OUT1 0, IN1- IN1- 0, V- V- 0
 
             if tokens_code and re.match(r"^(?:OUT|IN)\d*[\+\-]?$", tokens_code[0], re.I):
@@ -364,16 +409,20 @@ class NetlistValidator:
 
                 clean_lines.append(f"* Removed pin ground short: {line_str}")
 
-                continue
-
+                continue
+
+
+
             # Remove invalid independent voltage model: e.g. .model VREF V (V=2.5)
 
             if line_str.lower().startswith(".model") and len(tokens) >= 3 and tokens[2].upper() == "V":
 
                 clean_lines.append(f"* Removed invalid V model: {line_str}")
 
-                continue
-
+                continue
+
+
+
             # Check for incomplete / truncated device lines (e.g. bare "C_OUTR", missing BJT nodes)
 
             if tokens_code and first_tok[0].upper() in "RCLMQ" and not first_tok.startswith("."):
@@ -396,8 +445,10 @@ class NetlistValidator:
 
                     clean_lines.append(f"* Truncated BJT removed (missing terminal): {line_str}")
 
-                    continue
-
+                    continue
+
+
+
             # For behavioral sources (B, E, G): strip invalid parameters TD=... and TRISTATE=...
 
             if tokens and first_tok[0].upper() in "BEG" and not first_tok.startswith("."):
@@ -408,8 +459,10 @@ class NetlistValidator:
 
                 line_str = line.strip()
 
-                tokens = line_str.split()
-
+                tokens = line_str.split()
+
+
+
             # Break self-referential algebraic loops in B-sources that cause singular matrix in LTspice
 
             # e.g.: B1 X 0 V = { cond ? new_val : V(X) } -> causes singular matrix on node X
@@ -428,8 +481,10 @@ class NetlistValidator:
 
                     line_str = line.strip()
 
-                    tokens = line_str.split()
-
+                    tokens = line_str.split()
+
+
+
             # Prevent parallel voltage sources driving identical nodes (over-defined circuit matrix)
 
             if tokens and first_tok[0].upper() in "BV" and len(tokens) >= 3 and not first_tok.startswith("."):
@@ -464,8 +519,10 @@ class NetlistValidator:
 
                     else:
 
-                        scope_v_pairs.add(pair)
-
+                        scope_v_pairs.add(pair)
+
+
+
             # For pulse sources: replace dynamic V(node) inside PULSE with static typical voltage
 
             if "PULSE(" in line_str.upper():
@@ -474,8 +531,10 @@ class NetlistValidator:
 
                 line_str = line.strip()
 
-                tokens = line_str.split()
-
+                tokens = line_str.split()
+
+
+
             # For MOSFETs (M...), remove parentheses around parameters e.g. (W=10u L=0.5u) -> W=10u L=0.5u
 
             if tokens and first_tok.upper().startswith("M") and not first_tok.startswith("."):
@@ -484,8 +543,10 @@ class NetlistValidator:
 
                 line_str = line.strip()
 
-                tokens = line_str.split()
-
+                tokens = line_str.split()
+
+
+
                 # Fix 3-terminal MOSFETs where bulk was omitted before model (e.g. M1 d g s PMOS W=10u L=1u)
 
                 # SPICE requires 4 nodes: d g s b model. If tokens_code has only 3 nodes, tie bulk to source.
@@ -506,8 +567,10 @@ class NetlistValidator:
 
                         line_str = line.strip()
 
-                        tokens = line_str.split()
-
+                        tokens = line_str.split()
+
+
+
             # For Capacitors (C...), ensure exactly 2 nodes before value (fix Cc n1 n2 {extra} 20p)
 
             if tokens and first_tok.upper().startswith("C") and not first_tok.startswith("."):
@@ -522,8 +585,10 @@ class NetlistValidator:
 
                     line_str = line.strip()
 
-                    tokens = line_str.split()
-
+                    tokens = line_str.split()
+
+
+
             # For BJTs (Q...), strip invalid MOSFET sizing parameters W=... L=...
 
             if tokens and tokens[0].upper().startswith("Q") and not tokens[0].startswith("."):
@@ -536,8 +601,10 @@ class NetlistValidator:
 
                 code_only = re.split(r'[;\$]|(?<!\w)\*', line_str)[0].strip()
 
-                tokens_code = code_only.split()
-
+                tokens_code = code_only.split()
+
+
+
                 # If BJT only has 2 nodes before model (e.g. Q1 c b QNPN), insert reference emitter
 
                 if len(tokens_code) >= 4 and tokens_code[3].upper() in ("QNPN", "QPNP", "NPN", "PNP"):
@@ -550,8 +617,10 @@ class NetlistValidator:
 
                     line_str = line.strip()
 
-                    tokens = line_str.split()
-
+                    tokens = line_str.split()
+
+
+
             # In LTspice expressions, logical AND is & (not &&) and logical OR is | (not ||)
 
             if "&&" in line:
@@ -564,8 +633,10 @@ class NetlistValidator:
 
                 line = line.replace("||", "|")
 
-                line_str = line.strip()
-
+                line_str = line.strip()
+
+
+
             # Map time integration / differentiation to LTspice functions idt(...) and ddt(...)
 
             if "integ(" in line.lower() or "diff(" in line.lower():
@@ -574,8 +645,10 @@ class NetlistValidator:
 
                 line = re.sub(r'\bDIFF\s*\(', 'ddt(', line, flags=re.IGNORECASE)
 
-                line_str = line.strip()
-
+                line_str = line.strip()
+
+
+
             # Sanitize mid-line * comments to ; comments (e.g. ".param Ibias = 300uA * comment", "R1 1 2 1k * comment")
 
             if " *" in line:
@@ -596,8 +669,10 @@ class NetlistValidator:
 
                     line = re.sub(r'(?<=\S)\s+\*\s*([A-Za-z].*)$', r' ; \g<1>', line)
 
-                line_str = line.strip()
-
+                line_str = line.strip()
+
+
+
             # Wrap bare parameter names or unbraced math on R, C, L devices in curly braces { ... }
 
             tokens = line_str.split()
@@ -622,8 +697,10 @@ class NetlistValidator:
 
                         line = " ".join(tokens)
 
-                        line_str = line.strip()
-
+                        line_str = line.strip()
+
+
+
             # In-line procedural assignments inside B-sources: e.g. { a = 1 b = 2 c }
 
             first_tok = tokens[0] if tokens else ""
@@ -666,8 +743,10 @@ class NetlistValidator:
 
                             line = f"{prefix}{last_expr}{suffix}"
 
-                            line_str = line.strip()
-
+                            line_str = line.strip()
+
+
+
             # Disambiguate duplicate instance names (e.g. M_OUT_N defined twice in same subckt)
 
             # Strip inline comments for syntactic token checks
@@ -678,8 +757,10 @@ class NetlistValidator:
 
             tokens = line_str.split()
 
-            first_tok = tokens[0] if tokens else ""
-
+            first_tok = tokens[0] if tokens else ""
+
+
+
             # Drop accidental pin declaration lines inside body: e.g. OUT1 OUT1 0, IN1- IN1- 0, V- V- 0
 
             if tokens_code and re.match(r"^(?:OUT|IN)\d*[\+\-]?$", tokens_code[0], re.I):
@@ -720,72 +801,58 @@ class NetlistValidator:
 
                 else:
 
-                    scope_instances.add(inst_name)
-
-            clean_lines.append(line)
-
-        # Hoist all .model definitions to the global scope before the first .subckt
+                    scope_instances.add(inst_name)
 
-        # This prevents "Node or model name expected" when helper subcircuits are defined
 
+
+            clean_lines.append(line)
+
+
+
+        # Hoist all .model definitions to the global scope before the first .subckt (deduplicated, no unused dummy models)
         full_text = "\n".join(clean_lines)
-
         model_pattern = re.compile(r'^\s*(\.model\s+[^\n]+)', re.MULTILINE | re.IGNORECASE)
+        found_models = model_pattern.findall(full_text)
 
-        found_models = model_pattern.findall(full_text)
-
+        # Remove existing .model lines and old hoist banners so re-running never duplicates them
+        body_without_models = re.sub(r'^\s*\.model\s+[^\n]+\n?', '', full_text, flags=re.MULTILINE | re.IGNORECASE)
+        body_without_models = re.sub(r'^\* --- Globally Hoisted Models[^\n]*\n?', '', body_without_models, flags=re.MULTILINE)
+
         standard_models = [
+            ("NMOS", ".model NMOS NMOS (LEVEL=1 VTO=0.7 KP=100u GAMMA=0.4 PHI=0.7 LAMBDA=0.01)"),
+            ("PMOS", ".model PMOS PMOS (LEVEL=1 VTO=-0.7 KP=40u GAMMA=0.5 PHI=0.8 LAMBDA=0.01)"),
+            ("D_PROT", ".model D_PROT D (IS=1e-15 N=1 RS=10)"),
+        ]
 
-            ".model NMOS NMOS (LEVEL=1 VTO=0.7 KP=100u GAMMA=0.4 PHI=0.7 LAMBDA=0.01)",
-
-            ".model PMOS PMOS (LEVEL=1 VTO=-0.7 KP=40u GAMMA=0.5 PHI=0.8 LAMBDA=0.01)",
-
-            ".model D_PROT D (IS=1e-15 N=1 RS=10)",
-
-            ".model S_MODEL VSWITCH (RON=10 ROFF=1G VTH=0.5 VH=0.1)"
-
-        ]
-
         all_models = list(found_models)
-
-        for sm in standard_models:
-
-            m_type = sm.split()[1].upper()
-
-            if not any(f" {m_type} " in m.upper() for m in found_models):
-
-                all_models.insert(0, sm)
-
-        # Remove duplicate models preserving order
+        for m_name, sm in standard_models:
+            # Only inject a fallback standard model if it is actually referenced by an element line
+            if re.search(r'\b' + re.escape(m_name) + r'\b', body_without_models, re.IGNORECASE):
+                if not any(m.strip().split()[1].upper() == m_name for m in found_models if len(m.strip().split()) >= 2):
+                    all_models.insert(0, sm)
 
         unique_models = []
-
         seen_model_names = set()
-
         for m in all_models:
-
             m_parts = m.strip().split()
-
             if len(m_parts) >= 2:
-
                 name = m_parts[1].upper()
-
+                if name == "S_MODEL" and not re.search(r'\bS_MODEL\b', body_without_models, re.IGNORECASE):
+                    continue
                 if name not in seen_model_names:
-
                     seen_model_names.add(name)
+                    unique_models.append(m.strip())
 
-                    unique_models.append(m.strip())
-
+        full_text = body_without_models
         idx_first_sub = full_text.lower().find(".subckt")
-
         if idx_first_sub != -1 and unique_models:
-
             header = "* --- Globally Hoisted Models for Multi-Subcircuit Visibility ---\n" + "\n".join(unique_models) + "\n\n"
+            full_text = full_text[:idx_first_sub] + header + full_text[idx_first_sub:]
 
-            full_text = full_text[:idx_first_sub] + header + full_text[idx_first_sub:]
-
-        return full_text
-
+        return full_text
+
+
+
     def validate(
 
         self,
@@ -808,8 +875,10 @@ class NetlistValidator:
 
         warnings = []
 
-        cleaned_netlist = self.sanitize_spice_syntax(self.normalize_structure(netlist.strip()))
-
+        cleaned_netlist = self.sanitize_spice_syntax(self.normalize_structure(netlist.strip()))
+
+
+
         # 1. Check .subckt header (the DUT is the subckt named as expected, else the LAST one = top-level wrapper)
 
         heads = re.findall(r'^\s*\.subckt\s+([a-zA-Z0-9_]+)\s+(.+)$', cleaned_netlist, re.MULTILINE | re.IGNORECASE)
@@ -834,28 +903,36 @@ class NetlistValidator:
 
             declared_name = pick[0]
 
-            declared_pins = subckt_match.group(1).split()
-
+            declared_pins = subckt_match.group(1).split()
+
+
+
             # Verify pin presence
 
             expected_pin_names = [p["name"] for p in expected_pins]
 
             expected_pin_names_lower = [p["name"].lower() for p in expected_pins]
 
-            declared_pins_lower = [p.lower() for p in declared_pins]
-
+            declared_pins_lower = [p.lower() for p in declared_pins]
+
+
+
             missing_pins = []
 
             for ep, ep_lower in zip(expected_pin_names, expected_pin_names_lower):
 
                 if ep_lower not in declared_pins_lower:
 
-                    missing_pins.append(ep)
-
+                    missing_pins.append(ep)
+
+
+
             if missing_pins:
 
-                warnings.append(f"Pins expected from datasheet missing in .subckt: {missing_pins}")
-
+                warnings.append(f"Pins expected from datasheet missing in .subckt: {missing_pins}")
+
+
+
         # 2. Check .ends directive
 
         ends_match = re.search(r'^\s*\.ends(\s+[a-zA-Z0-9_]+)?\s*$', cleaned_netlist, re.MULTILINE | re.IGNORECASE)
@@ -864,22 +941,28 @@ class NetlistValidator:
 
             warnings.append("Missing .ends directive. Auto-appending .ends.")
 
-            cleaned_netlist += f"\n.ends {declared_name}\n"
-
+            cleaned_netlist += f"\n.ends {declared_name}\n"
+
+
+
         # 3. Check for undefined device models
 
         used_models = set()
 
-        defined_models = set()
-
+        defined_models = set()
+
+
+
         for line in cleaned_netlist.splitlines():
 
             line_str = line.strip()
 
             if not line_str or line_str.startswith("*") or line_str.startswith(";"):
 
-                continue
-
+                continue
+
+
+
             # Check .model definition
 
             model_def_match = re.match(r'^\.model\s+([a-zA-Z0-9_]+)\s+([a-zA-Z0-9_]+)', line_str, re.IGNORECASE)
@@ -888,8 +971,10 @@ class NetlistValidator:
 
                 defined_models.add(model_def_match.group(1).upper())
 
-                continue
-
+                continue
+
+
+
             # Check MOSFET: M... d g s b model_name [w=...] [l=...]
 
             mos_match = re.match(r'^M[a-zA-Z0-9_]+\s+\S+\s+\S+\s+\S+\s+\S+\s+([a-zA-Z0-9_]+)', line_str, re.IGNORECASE)
@@ -898,8 +983,10 @@ class NetlistValidator:
 
                 used_models.add(mos_match.group(1).upper())
 
-                continue
-
+                continue
+
+
+
             # Check BJT: Q... c b e [s] model_name
 
             bjt_match = re.match(r'^Q[a-zA-Z0-9_]+\s+\S+\s+\S+\s+\S+\s+([a-zA-Z0-9_]+)', line_str, re.IGNORECASE)
@@ -908,8 +995,10 @@ class NetlistValidator:
 
                 used_models.add(bjt_match.group(1).upper())
 
-                continue
-
+                continue
+
+
+
             # Check Diode: D... a c model_name
 
             dio_match = re.match(r'^D[a-zA-Z0-9_]+\s+\S+\s+\S+\s+([a-zA-Z0-9_]+)', line_str, re.IGNORECASE)
@@ -918,22 +1007,28 @@ class NetlistValidator:
 
                 used_models.add(dio_match.group(1).upper())
 
-                continue
-
+                continue
+
+
+
         missing_models = [m for m in used_models if m not in defined_models]
 
         if missing_models:
 
             warnings.append(f"Models referenced but not defined in netlist: {missing_models}. Auto-injecting standard physical models.")
 
-            cleaned_netlist = self.STANDARD_MODELS + "\n" + cleaned_netlist
-
+            cleaned_netlist = self.STANDARD_MODELS + "\n" + cleaned_netlist
+
+
+
         # 4. Check for invalid characters or ngspice directives incompatible with LTspice
 
         if ".control" in cleaned_netlist.lower():
 
-            errors.append("Netlist contains .control block which is invalid inside an LTspice subcircuit.")
-
+            errors.append("Netlist contains .control block which is invalid inside an LTspice subcircuit.")
+
+
+
         # 5. STRICT PHYSICAL ANALOG COMPLIANCE: Prohibit LTspice Behavioral constructs (B-sources, A-devices, etc.)
         prohibited_behavioral = []
         for line in cleaned_netlist.splitlines():
@@ -968,10 +1063,14 @@ class NetlistValidator:
 
                     f"(BJT Q, MOSFET M, JFET J, Diode D, Resistor R, Capacitor C, Inductor L, Subcircuit X)."
 
-                )
-
-        is_valid = len(errors) == 0
-
+                )
+
+
+
+        is_valid = len(errors) == 0
+
+
+
         return {
 
             "is_valid": is_valid,

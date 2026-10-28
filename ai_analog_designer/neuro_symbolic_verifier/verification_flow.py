@@ -26,12 +26,13 @@ def verify(netlist: str, plan: Dict[str, Any], schedule_us: Dict[str, float], ou
     if os.path.isdir(run_dir):
         shutil.rmtree(run_dir, ignore_errors=True)
     try:
-        cc = compile_check(netlist, plan, run_dir, dut_name=dut_name)
+        cc = compile_check(netlist, plan, run_dir, dut_name=dut_name, schedule_us=schedule_us)
     except Exception as e:
         cc = {"ok": False, "errors": [f"{type(e).__name__}: {e}"], "path": None}
     if not cc["ok"]:
         # The netlist does not compile / reach an operating point: report it and skip all fixtures.
-        deck_errors = {it["fixture_key"]: "netlist failed the LTspice compile check"
+        stage_msg = f"netlist blocked by {cc.get('stage', 'PDG_GATE')}: {'; '.join(cc.get('errors', [])[:2])}"
+        deck_errors = {it["fixture_key"]: stage_msg
                        for it in plan["items"] if it["status"] == "PLANNED"}
         ev = evaluate(plan, {}, deck_errors)
         for r in ev["rows"]:
@@ -70,6 +71,11 @@ def verify(netlist: str, plan: Dict[str, Any], schedule_us: Dict[str, float], ou
     return {
         "pass_rate_percent": s["pass_rate_measured_pct"],
         "pass_rate_hard_percent": s["pass_rate_hard_pct"],
+        "unique_pass_rate_percent": s.get("unique_kind_pass_rate_pct", 0.0),
+        "unique_kinds_passed": s.get("unique_kinds_passed", 0),
+        "unique_kinds_measured": s.get("unique_kinds_measured", 0),
+        "pdg_gate_stage": cc.get("stage", "UNKNOWN"),
+        "pdg_gate_metrics": cc.get("pdg_metrics", {}),
         "coverage_pct": s["coverage_pct"],
         "passed_specs": s["pass_hard"] + s["pass_typ"],
         "failed_specs": s["fail_hard"] + s["fail_typ"],
@@ -102,7 +108,9 @@ def write_artifacts(ev: Dict[str, Any], out_dir: str, prefix: str) -> Dict[str, 
              f"- Electrical (testable) rows: **{s['electrical_rows']}**",
              f"- Mapped to a deterministic fixture: **{s['planned']}**",
              f"- Actually measured: **{s['measured']}** → coverage **{ev['coverage_pct']} %**",
-             f"- Pass among measured: **{ev['pass_rate_percent']} %** ({ev['passed_specs']}/{ev['passed_specs'] + ev['failed_specs']})",
+             f"- PDG Causal Gate Status: **{ev.get('pdg_gate_stage', 'UNKNOWN')}**",
+             f"- Pass among measured rows: **{ev['pass_rate_percent']} %** ({ev['passed_specs']}/{ev['passed_specs'] + ev['failed_specs']})",
+             f"- Pass among unique parameter kinds: **{ev.get('unique_pass_rate_percent', 0.0)} %** ({ev.get('unique_kinds_passed', 0)}/{ev.get('unique_kinds_measured', 0)})",
              f"- Sim errors {s['sim_errors']} | not observed {s['not_observed']} | no fixture {s['no_fixture']} | "
              f"unsupported kind {s['unsupported_kind']} | not testable {s['not_testable']}", "",
              "| Symbol | Name | Conditions | Limits (canonical) | Measured | Result |", "|---|---|---|---|---|---|"]

@@ -255,6 +255,8 @@ def parse_conditions(text: str) -> Dict[str, Any]:
         c["rail"] = "pos"
     elif re.search(r"negative rail|\(V[-–]\)|V[-–]\b.*rail|sink", t, re.I):
         c["rail"] = "neg"
+    if re.search(r"connected\s+to\s*\(?\s*V\s*[-–]\s*\)?|connected\s+to\s+GND", t, re.I):
+        c["rl_to"] = "vn"
     if re.search(r"-\s*40\s*°?C|0\s*°?C\s*(to|≤)|full\s+range|full operating|T\s*A\s*=\s*T\s*MIN|TMIN|over (the )?(full|rated|operating).*temp|over temperature|full temp", t, re.I) \
             and not re.search(r"25\s*°?C", t):
         c["temp_range"] = True
@@ -386,7 +388,7 @@ def build_plan(ic_info: Dict[str, Any], pins: List[Dict[str, Any]], specs: List[
             rst = cond.get("rst_level")
             if rst == "vcc":
                 rst = vs
-            item["fixture"] = {"vs": vs, "rl": cond.get("rl"), "cl": cond.get("cl"), "iout": cond.get("iout"),
+            item["fixture"] = {"vs": vs, "rl": cond.get("rl"), "rl_to": cond.get("rl_to"), "cl": cond.get("cl"), "iout": cond.get("iout"),
                                "gain": cond.get("gain"), "freq": cond.get("freq"), "rail": cond.get("rail"),
                                "state": cond.get("state"), "vo": cond.get("vo"), "vid": cond.get("vid"), "vka": cond.get("vka"),
                                "vo_at": cond.get("vo_at"), "vo_offset": cond.get("vo_offset"),

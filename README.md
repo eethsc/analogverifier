@@ -2,178 +2,121 @@
 
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
 [![Architecture: Dual-Harness²](https://img.shields.io/badge/Architecture-Dual--Harness%C2%B2-purple.svg)](#-시스템-아키텍처-dual-harness²-공진화-구조)
+[![Verification: PDG Staged Causal Gate](https://img.shields.io/badge/Verifier-PDG%20Staged%20Causal%20Gate-critical.svg)](#-pdg-기반-4단계-인과-검증-파이프라인-pdg-staged-causal-verification)
 [![Policy: Pure Transistor Analog](https://img.shields.io/badge/SPICE-Pure%20Transistor%20Level%20Only-success.svg)](#-순수-물리-아날로그-강제-정책-zero-behavioral-policy)
-[![Web Studio: E2E Verified](https://img.shields.io/badge/Web%20Studio-Playwright%20E2E%20PASS-brightgreen.svg)](#5-인터랙티브-web-studio-및-브라우저-e2e-검증)
 
-**AnalogVerifier**는 상용 아날로그 IC의 데이터시트(PDF)만 입력받아 **하드웨어 지식 그래프(HKG)** 와 **포트 의존성 그래프(PDG)** 를 추출하고, **순수 물리 트랜지스터 수준(BJT, MOSFET, JFET, Diode, R/C/L)** 의 SPICE 넷리스트를 자율 합성한 뒤, **LTspice 물리 시뮬레이션과 수치 해석(FFT 등)** 을 결합한 하이브리드 검증기로 스펙 달성률을 측정·진화시키는 **폐루프(Closed-Loop) 자율 설계 시스템**입니다.
-
-특히 본 프로젝트는 회로 합성기(Synthesizer)뿐만 아니라 검증기(Verifier) 자체도 스스로 규칙과 테스트벤치를 확장해 나가는 **Dual-Harness² (이중 자율 진화 아키텍처)** 와, 검증기의 환각(Reward Hacking)을 원천 차단하는 **Golden Oracle Gatekeeper**를 핵심 엔진으로 채택하고 있습니다.
+**AnalogVerifier**는 상용 아날로그 IC의 데이터시트(PDF)만 입력받아 **하드웨어 지식 그래프(HKG)** 와 **포트 의존성 그래프(PDG)** 를 추출하고, **순수 물리 트랜지스터 수준(BJT, MOSFET, JFET, Diode, R/C/L)** 의 SPICE 넷리스트를 자율 합성한 뒤, **PDG 인과 순서($\text{Power} \to \text{DC Bias} \to \text{DC Transfer} \to \text{AC/Dynamic}$)가 강제된 LTspice 물리 검증기**로 스펙 달성률을 측정·진화시키는 **폐루프(Closed-Loop) 자율 설계 시스템**입니다.
 
 ---
 
-## 📌 한눈에 보는 현재 요약 (2026-10-27 기준)
+## 📌 한눈에 보는 현재 요약 (2026-10-28 기준)
 
 | 파이프라인 단계 | 핵심 모듈 | 현재 상태 | 실측 성과 및 검증 근거 |
 |---|---|---|---|
-| **Phase 1 — PDF → HKG 추출** | [`pdf_parser.py`](ai_analog_designer/pdf_to_graph/pdf_parser.py), [`hardware_kg_builder.py`](ai_analog_designer/pdf_to_graph/hardware_kg_builder.py) | ✅ **검증 완료** | 8개 표준 IC Ground-Truth 대조 평균 **95.2 / 100** (`gpt-6-luna`), **94.0 / 100** (`nemotron-3-ultra-550b`) |
+| **Phase 1 — PDF → HKG 추출 (ParseBench 기반)** | [`pdf_parser.py`](ai_analog_designer/pdf_to_graph/pdf_parser.py), [`hardware_kg_builder.py`](ai_analog_designer/pdf_to_graph/hardware_kg_builder.py) | ✅ **검증 완료** | 8개 표준 IC Ground-Truth 대조 평균 **95.2 / 100** (`gpt-6-luna`), **94.0 / 100** (`nemotron-3-ultra-550b`) |
 | **Phase 2 — HKG → PDG & $\sigma(p)$** | [`pdg_extractor.py`](ai_analog_designer/pdf_to_graph/pdg_extractor.py), [`pdg_fidelity_verifier.py`](ai_analog_designer/pdf_to_graph/pdg_fidelity_verifier.py) | ✅ **검증 완료** | 인과 의존성 Recall **0.86–1.00**, 전원 시퀀싱 순서 일관성 **1.00**, 무라벨 출처 감사(Provenance Audit) 내장 |
-| **Phase 3 — 순수 물리 회로 합성** | [`harness2_architect.py`](ai_analog_designer/circuit_synthesis/harness2/harness2_architect.py), [`netlist_validator.py`](ai_analog_designer/circuit_synthesis/netlist_validator.py) | ✅ **병목 돌파 (진화 중)** | **Behavioral 구문 0건** 순수 트랜지스터 넷리스트로 `LM393B` **51.5%–72.7%**, `TL431` **40.0%**, `LM358` **25.0%** 스펙 통과 |
-| **Phase 4 — 하이브리드 물리 검증** | [`deterministic_testbench.py`](ai_analog_designer/neuro_symbolic_verifier/deterministic_testbench.py), [`dynamic_testbench_harness.py`](ai_analog_designer/neuro_symbolic_verifier/dynamic_testbench_harness.py) | ✅ **검증 완료** | 결정론적 LTspice 픽스처 + 미지원 스펙용 **LLM 동적 테스트벤치 & NumPy/FFT 후처리 엔진** 결합 |
-| **Phase 5 — Dual-Harness² 공진화** | [`dual_harness2_coordinator.py`](ai_analog_designer/neuro_symbolic_verifier/harness2_verifier/dual_harness2_coordinator.py), [`golden_oracle_anchor.py`](ai_analog_designer/neuro_symbolic_verifier/harness2_verifier/golden_oracle_anchor.py) | ✅ **구현·검증 완료** | 합성 하네스($C_1\sim C_8$)와 검증 하네스($V_1\sim V_3$) 동시 진화 + 제조사 Golden 모델 100% 통과 게이트키퍼 |
+| **Phase 3 — 순수 물리 회로 합성 & 문법 정화** | [`harness2_architect.py`](ai_analog_designer/circuit_synthesis/harness2/harness2_architect.py), [`netlist_validator.py`](ai_analog_designer/circuit_synthesis/netlist_validator.py) | ✅ **결함 교정 완료** | 마크다운 주석 오염(`-` $\to$ `*`) 자동 정화, 중복 `.model` 호이스팅 제거, 미사용 더미 모델 주입 제거 |
+| **Phase 4 — PDG 4단계 인과 물리 검증** | [`deterministic_testbench.py`](ai_analog_designer/neuro_symbolic_verifier/deterministic_testbench.py), [`verification_flow.py`](ai_analog_designer/neuro_symbolic_verifier/verification_flow.py) | ✅ **PDG 게이트 강제 완료** | **Stage 0(토폴로지/연결성) $\to$ Stage 1(전원/DC 바이어스) $\to$ Stage 2(DC 신호 전달) $\to$ Stage 3(개별 스펙)** 순차 게이트 및 **고유 지표(Unique Kind) 통과율** 도입 |
+| **Phase 5 — Dual-Harness² 공진화** | [`dual_harness2_coordinator.py`](ai_analog_designer/neuro_symbolic_verifier/harness2_verifier/dual_harness2_coordinator.py), [`golden_oracle_anchor.py`](ai_analog_designer/neuro_symbolic_verifier/harness2_verifier/golden_oracle_anchor.py) | ✅ **구현·검증 완료** | 합성 하네스($C_1\sim C_8$)와 검증 하네스($V_1\sim V_3$) 구조화 + 제조사 Golden 모델 100% 통과 게이트키퍼 |
 | **인터랙티브 Web Studio** | [`studio_server.py`](ai_analog_designer/web_studio/studio_server.py), [`run_studio.py`](run_studio.py) | ✅ **E2E 테스트 통과** | 실시간 PDG 시각화, 시퀀싱 타임라인, Dual-Harness² 실시간 합성 및 HKG 캐시 연동 (Playwright 검증) |
 
 ---
 
-## 🏗️ 시스템 아키텍처: Dual-Harness² 공진화 구조
+## 🛡️ PDG 기반 4단계 인과 검증 파이프라인 (PDG Staged Causal Verification)
 
-기존의 에이전트 시스템들은 회로 합성 프롬프트만 수정하고 검증기(Verifier)는 고정된 정적 코드로 유지하여, 새로운 소자군(Audio Amp, LDO, PMIC 등)이나 복합 스펙(`THD+N`, `Settling Time`, `Dropout Voltage`)이 등장하면 `UNSUPPORTED_KIND`로 멈추는 한계가 있었습니다.
+### 1. 왜 기존 검증기에서 '동작 불능 회로'가 25%~51.5% 통과율을 기록했는가? (Forensic Audit)
 
-**AnalogVerifier**는 합성기(`Synthesizer Harness²`)와 검증기(`Verifier Harness²`)를 모두 진화 가능한 트리 구조로 정의하고, 이를 **Dual-Harness² Coordinator**로 묶어 상호 진화(Co-Evolution)시킵니다.
+기존 검증기([`deterministic_testbench.py`](ai_analog_designer/neuro_symbolic_verifier/deterministic_testbench.py))는 데이터시트에서 PDG(Port Dependency Graph)와 전원 시퀀싱 스케줄 $\sigma(p)$를 추출해 두고도, 정작 시뮬레이션 단계에서는 **문법 에러 유무(`.op` 컴파일 체크)만 확인한 뒤 30~90개의 개별 스펙 픽스처를 동시에 병렬 실행**했습니다. 이로 인해 다음과 같은 치명적 착시(Reward Hacking)가 발생했습니다:
 
-### 1. 전체 End-to-End 파이프라인 및 Dual-Harness² 흐름도
-
-```mermaid
-flowchart TB
-    subgraph Input["📄 Phase 1 & 2: 데이터시트 지식화"]
-        PDF["IC 데이터시트 (PDF)"] --> Parser["PDFDatasheetParser<br/>(좌표 기반 표 재구성 & MIN/TYP/MAX 열 태깅)"]
-        Parser --> HKG["Hardware Knowledge Graph (HKG)<br/>핀 역할 / 전기적 스펙 / 페이지·원문 출처"]
-        HKG --> PDG["Port Dependency Graph (PDG)<br/>인과 의존성 DAG & 전원 시작 스케줄 σ(p)"]
-        PDG --> Audit["PDGFidelityVerifier<br/>무라벨 출처 감사 (Provenance Audit)"]
-    end
-
-    subgraph VerifierHarness["🛡️ Verifier Harness² (V1 ~ V3 자율 진화 검증기)"]
-        V1["V1. SpecClassifier<br/>(spec_planner.py 정규식·조건 파싱 룰)"]
-        V2["V2. FixtureSynthesizer<br/>(deterministic_testbench.py 측정 픽스처)"]
-        V3["V3. UnitNormalizer<br/>(units.py 복합 물리 단위 변환기)"]
-        DynTB["DynamicTestbenchHarness<br/>(LLM 동적 회로 + LTspice .raw + NumPy/FFT 수식 후처리)"]
-        Oracle["🔒 Golden Oracle Gatekeeper<br/>(TI/ADI 제조사 공인 매크로모델 100% 통과 검증)"]
-        
-        V1 --> V2 --> V3
-        V2 -.->|"미지원 스펙 (UNSUPPORTED_KIND)"| DynTB
-        DynTB -.->|"검증된 픽스처 승격 제안"| Oracle
-        Oracle ==>|"Pass Rate == 100% & 오판정 == 0"| V2
-    end
-
-    subgraph SynthHarness["⚡ Synthesizer Harness² (C1 ~ C8 자율 진화 합성기)"]
-        Tree["HarnessTree (C1: 시스템 지침, C2: 물리 가드레일,<br/>C3: 수렴 트랩 메모리, C4: 툴 정렬, C5: 토폴로지 블루프린트)"]
-        Arch["AICircuitArchitect<br/>순수 트랜지스터 수준 SPICE 합성 (Q, M, J, D, R, C, L)"]
-        Val["NetlistValidator & Gatekeeper<br/>1) Behavioral 구문 원천 차단 (B, A, VALUE, if, table)<br/>2) 최소 2개 이상 능동 트랜지스터 강제<br/>3) 부유 노드 보정 & .op 사전 컴파일 점검"]
-        
-        Tree --> Arch --> Val
-    end
-
-    subgraph Loop["🔄 Probe - Propose - Compose 폐루프"]
-        LTspice["LTspice XVII / 24 헤드리스 시뮬레이션<br/>+ 0A 개방회로(Open-Circuit) 보상 해킹 감지"]
-        Eval["ClosedLoopEvaluator<br/>측정 커버리지 vs 스펙 통과율 산출"]
-        Proposer["HarnessProposer<br/>실패 원인 진단 & C1~C8 / V1~V3 패치 제안"]
-        Lib[("📚 harness2_library/<br/>소자군별 영구 경험 저장소<br/>(EXPERIENCE.json / .md)")]
-    end
-
-    Audit --> V1
-    Audit --> Tree
-    Val --> LTspice
-    V3 --> LTspice
-    DynTB --> LTspice
-    LTspice --> Eval
-    Eval -->|"미통과 스펙 & 수렴 로그"| Proposer
-    Proposer -->|"Propose & Probe"| Tree
-    Proposer -->|"새 스펙 룰/픽스처 제안"| Oracle
-    Proposer ==>|"성능 향상 입증 시 영구 병합 (Compose)"| Lib
-    Lib -.->|"다음 실행 시 도메인 지식 주입"| Tree
-    Lib -.->|"검증된 V1~V3 규칙 로드"| V1
-```
+1. **`LM393B_iter2.cir` (기존 51.5% 착시 $\to$ PDG 게이트 적용 시 0.0% 차단)**:
+   - 1단 전류 미러(`Qm1`, `Qm2`) 및 2단 능동 부하(`Qload`)와 병렬로 **$500\text{ }\Omega$ 저항(`Rm1`, `Rm2`, `Rload`)** 이 잘못 연결되어 있었습니다 ($32.5\text{ }\mu\text{A} \times 500\text{ }\Omega = 16.25\text{ mV} \ll V_{BE} \approx 0.65\text{ V}$).
+   - 이로 인해 전류 미러와 증폭단이 완전히 차단(Cut-off)되어 출력 전압이 입력과 무관하게 $V(\text{OUT}) \approx 0.12\text{ V}$($\Delta V = 0.0\text{ V}$)에 고정된 죽은 회로였으나, **"출력이 낮게 유지되면 통과하는" `VOL` 중복 행(12개)과 대칭 핀 전류 `IO`/`IB` 행**에서 점수를 얻어 51.5%(35/68)로 집계되었습니다.
+2. **`TL431_FINAL_HARNESS2.cir` (기존 40.0% 착시 $\to$ PDG 게이트 적용 시 0.0% 차단)**:
+   - 서브서킷 헤더에 선언되지 않은 `VCC` 노드를 참조하고, 내부에 금지된 **독립 전압원(`Vbias VCC N006 2.5V`)** 을 몰래 넣었으며, 내부 저항을 외부 글로벌 접지(`0`)로 직접 누설(`R_band N006 0 1k`)시켰습니다.
+3. **`LM358_FINAL_HARNESS2.cir` (기존 25.0% 착시 $\to$ PDG 게이트 적용 시 0.0% 차단)**:
+   - 출력단 MOSFET의 게이트를 차동 증폭단 출력이 아닌 전원 레일(`V+`, `V-`)에 직접 묶어 **입력단과 출력단 사이의 인과적 신호 경로가 완전히 단절**되어 있었으나, MOSFET 게이트 전류가 $0\text{ A}$라는 이유만으로 `IB`/`IOS` 스펙을 통과해 25.0%(7/28)로 기록되었습니다.
 
 ---
 
-### 2. 핵심 모듈별 역할 및 동작 원리
+### 2. 새롭게 강제된 PDG 4단계 인과 게이트 (`Stage 0` $\to$ `Stage 1` $\to$ `Stage 2` $\to$ `Stage 3`)
 
-#### (1) Phase 1 & 2: 출처 기반 데이터시트 파싱 (HKG & PDG)
-- **좌표 기반 테이블 복원 ([`pdf_parser.py`](ai_analog_designer/pdf_to_graph/pdf_parser.py))**: PDF 내 단어들의 2차원 좌표를 분석하여 표의 열 구조를 복원하고, 각 수치에 `{MIN}`, `{TYP}`, `{MAX}` 태그를 명시적으로 부착합니다. (기존 대비 수치 추출 정확도 $0.68 \to 0.96$ 향상)
-- **페이지별 병렬 추출 및 카테고리 분리 ([`hardware_kg_builder.py`](ai_analog_designer/pdf_to_graph/hardware_kg_builder.py))**: 각 스펙 행을 `ELECTRICAL`(실제 측정 대상), `ABS_MAX`(절대최대정격), `RECOMMENDED`(권장 동작 조건), `THERMAL`, `ESD`로 분류하여 정격 조건이 검증 스펙으로 잘못 유입(Leak)되는 문제를 차단합니다.
-- **포트 의존성 그래프 및 시작 순서 스케줄링 ([`pdg_extractor.py`](ai_analog_designer/pdf_to_graph/pdg_extractor.py))**: 전원($V_{CC}$) $\to$ 바이어스/레퍼런스 $\to$ 입력단 $\to$ 출력단으로 이어지는 인과적 신호 경로를 방향성 비순환 그래프(DAG)로 구축하고, 위상 정렬을 통해 각 핀의 활성화 순서 $\sigma(p)$와 안정화 지연 시간을 계산합니다.
-
-#### (2) Phase 3: 순수 물리 아날로그 합성기 (`Synthesizer Harness²`)
-합성 에이전트의 실행 환경(Harness)을 8개의 구조적 노드($C_1 \sim C_8$)로 분해하여 관리합니다 ([`harness_tree.py`](ai_analog_designer/circuit_synthesis/harness2/harness_tree.py)):
-- **`C1` (System Prompt & Domain Directives)**: 대상 IC 패밀리(Op-Amp, Comparator, Shunt Reference 등)의 물리적 토폴로지 설계 지침.
-- **`C2` (Syntax & Physical Guardrails)**: SPICE 문법 불변성 및 **Behavioral 소자 절대 금지 규칙**.
-- **`C3` (Experience Memory & Convergence Traps)**: `Singular Matrix`, `GMIN stepping failed`, `Timestep too small` 등 이전 회차에서 겪은 수렴 실패 원인과 해결 레시피 메모리.
-- **`C4` (Tool Guidance)**: LTspice `.meas` 측정 타이밍과 PDG 안정화 스케줄 정렬 규칙.
-- **`C5` (Topology Blueprints / Skills)**: 검증된 핵심 서브서킷 블루프린트 (예: Darlington PNP 입력단, Miller 보상 + 영점 상쇄 저항 $R_z$, Baker Clamp 오픈 컬렉터 출력단 등).
-- **`C6` ~ `C8` (Scripts / Subagents / Plugins)**: 확장 스크립트 및 보조 진단 모듈 슬롯.
-
-#### (3) Phase 4 & 5: 하이브리드 검증기 (`Verifier Harness²`) 및 수식 후처리
-검증 환경을 3개의 진화 노드($V_1 \sim V_3$)와 동적 후처리 엔진으로 구성합니다:
+위와 같은 착시를 원천 차단하기 위해, [`deterministic_testbench.py`](ai_analog_designer/neuro_symbolic_verifier/deterministic_testbench.py)와 [`verification_flow.py`](ai_analog_designer/neuro_symbolic_verifier/verification_flow.py)는 PDG의 위상 정렬 순서($\sigma(\text{POWER}) \to \sigma(\text{BIAS}) \to \sigma(\text{IN}) \to \sigma(\text{OUT})$)에 따라 **이전 단계 게이트를 통과하지 못하면 이후 스펙 측정을 전면 중단하고 `0.0%`로 즉시 탈락**시킵니다.
 
 ```mermaid
 flowchart LR
-    Spec["추출된 스펙 행<br/>(예: VIO, AOL, THD+N, V_DO)"] --> Planner{"V1. SpecClassifier<br/>(spec_planner.py)"}
-    
-    Planner -->|"정적 매칭 성공"| DetTB["V2. DeterministicTestbench<br/>고정 LTspice 측정 픽스처 (.cir)"]
-    Planner -->|"UNSUPPORTED_KIND<br/>(미분류·복합 스펙)"| DynTB["DynamicTestbenchHarness<br/>LLM 동적 측정 회로 합성"]
-    
-    DetTB --> Sim["LTspice 시뮬레이션 실행"]
-    DynTB --> Sim
-    
-    Sim --> LogParser[".log (.meas 결과) &<br/>.raw (이진 파형 데이터) 추출"]
-    LogParser --> Math["NumPy / FFT 수학 후처리 샌드박스<br/>(푸리에 고조파 분석, RMS, 미적분, 정착 시간)"]
-    Math --> Units["V3. UnitNormalizer<br/>(dB, V/μs, nV/√Hz, %/V 정규화)"]
-    Units --> Judge["최종 PASS / FAIL 판정<br/>& 결함 진단 피드백 생성"]
+    S0["🔍 Stage 0: PDG 토폴로지 & 연결성 감사<br/>(pdg_topological_audit)<br/>• Behavioral(B/A/VALUE) 금지<br/>• 내부 독립 전압/전류원(V/I) 금지<br/>• 미선언 레일 및 노드 '0' 누설 금지<br/>• 입력 핀 → 출력 핀 비전원 인과 경로 검증"]
+    S1["⚡ Stage 1: 전원 & DC 바이어스 게이트<br/>(pdg_bias_and_transfer_check)<br/>• σ(POWER) → σ(BIAS) 정착 후 측정<br/>• 정상 대기 전류(100 nA ≤ IQ ≤ 250 mA)<br/>• 개방회로(0A) 및 전원 단락 차단"]
+    S2["📈 Stage 2: 인과적 DC 신호 전달 게이트<br/>(pdg_bias_and_transfer_check)<br/>• σ(IN) → σ(OUT) 임계 스텝 인가<br/>• VID = -100mV → +100mV (또는 VREF 스텝)<br/>• 출력 전압 변화량 ΔV(OUT) ≥ 0.5V 및 극성 검증"]
+    S3["🎯 Stage 3: 단계별 스펙 픽스처 실행<br/>(run_all & evaluate)<br/>• Wave 1: 정적 바이어스/오프셋 픽스처<br/>• Wave 2: 대구경 전달/구동 픽스처<br/>• Wave 3: 소신호 AC / 과도 응답 픽스처<br/>• 행 단위 + 고유 지표(Unique Kind) 통과율 산출"]
+
+    S0 ==>|"통과 시"| S1
+    S1 ==>|"통과 시"| S2
+    S2 ==>|"통과 시"| S3
+    S0 -.->|"위반 시 즉시 중단"| Fail["❌ 0.0% FAIL<br/>(구체적 결함 라인 리포트)"]
+    S1 -.->|"DC 바이어스 불량"| Fail
+    S2 -.->|"출력 고정 / 미동작"| Fail
 ```
 
-- **왜 LTspice 자체 기능의 한계를 넘어설 수 있는가? (`DynamicTestbenchHarness`)**:
-  LTspice의 기본 `.meas` 구문만으로는 `THD+N`(전고조파 왜곡+잡음), 주파수 대역별 `SNR`, 복잡한 조건의 `Settling Time` 등을 계산하기 어렵습니다. 본 시스템의 [`dynamic_testbench_harness.py`](ai_analog_designer/neuro_symbolic_verifier/dynamic_testbench_harness.py)는 LTspice가 생성한 이진 파형 파일(`.raw`)과 `.four` 로그를 직접 읽어 들여, **안전한 Python/NumPy 수학 샌드박스**에서 푸리에 변환(`np.fft.rfft`), 고조파 에너지 합산, 포락선(Envelope) 수렴 판정 등을 수행함으로써 모든 물리 지표를 정확히 계측합니다.
-- **Golden Oracle Gatekeeper ([`golden_oracle_anchor.py`](ai_analog_designer/neuro_symbolic_verifier/harness2_verifier/golden_oracle_anchor.py))**:
-  LLM이 검증기($V_1\sim V_3$)를 스스로 수정할 때 **기준을 낮춰 불량 회로를 통과시키는 환각(Reward Hacking)** 을 막기 위해, 새로 제안된 픽스처는 반드시 **제조사 공인 매크로모델(TI LM393, LM358, NE555, TL431 등)** 에 먼저 물려 테스트합니다. 공인 모델 통과율이 **100%**이고 오판정이 **0건**일 때만 [`VERIFIER_EXPERIENCE.json`](harness2_library/verifier_experience/VERIFIER_EXPERIENCE.json)에 영구 병합됩니다.
+- **중복 행 부풀리기 방지 (`unique_pass_rate_percent`)**:
+  데이터시트 표에 `VOL`이 조건별로 12줄, `VIO`가 18줄 나열되어 있을 때 특정 지표 하나만 통과해도 전체 점수가 부풀려지는 현상을 막기 위해, 전체 행 기준 통과율(`pass_rate_percent`)과 함께 **중복을 제거한 고유 물리 지표 종류별 통과율(`unique_pass_rate_percent`, 예: `vos`, `ib`, `ios`, `iq`, `vol`, `iol`, `ioh`, `avd_db`, `tresp` 9종 중 몇 종을 전부 통과했는가)** 을 동시에 산출합니다.
 
 ---
 
-## 🚫 순수 물리 아날로그 강제 정책 (Zero-Behavioral Policy)
+## 📊 실측 검증 결과: 기존 결함 넷리스트 vs PDG 검증 물리 BJT 넷리스트
 
-이 프로젝트의 목표는 논리적 수식으로 눈속임한 매크로모델이 아니라 **실제 트랜지스터 수준의 아날로그 회로를 구현**하는 것입니다. 따라서 시스템 전 계층에서 다음의 **3중 물리 가드레일**이 강제됩니다:
+아래 표는 (1) PDG 게이트 도입 전의 **과거 착시 수치**, (2) **동일한 과거 넷리스트에 PDG 4단계 게이트를 적용했을 때의 실제 차단 결과(`0.0%`)**, 그리고 (3) **회로적 결함을 모두 수정한 순수 물리 BJT 넷리스트의 PDG 검증 결과**를 투명하게 비교한 것입니다. (`LM393`과 `LM393B`를 별도 행으로 분리하여 표기합니다.)
 
-1. **LTspice Behavioral 구문 원천 금지 ([`netlist_validator.py`](ai_analog_designer/circuit_synthesis/netlist_validator.py))**:
-   - 비선형 행위 전원(`B` sources: `Bxxx ... V=...`, `I=...`), 디지털 논리 프리미티브(`A` devices: `SCHMITT`, `AND`, `OR`), 수식 기반 제어 전원(`E`/`G` 소자의 `VALUE={...}`, `TABLE`, `LAPLACE`), 조건문(`if()`, `idt()`, `ddt()`)이 발견되면 즉시 컴파일 전 단계에서 거부(Reject)합니다.
-   - 오직 물리적 소자(`Q` BJT, `M` MOSFET, `J` JFET, `D` Diode, `R`, `C`, `L`)와 명시적 `.model` 카드만 허용됩니다.
-2. **능동 트랜지스터 최소 개수 강제 ([`deterministic_testbench.py`](ai_analog_designer/neuro_symbolic_verifier/deterministic_testbench.py))**:
-   - 저항만 넣은 빈 껍데기 회로가 제출되는 것을 막기 위해, DUT `.subckt` 내부(하위 서브서킷 포함)에 최소 **2개 이상의 물리적 능동 트랜지스터(`Q`, `M`, `J`)** 가 존재하지 않으면 사전 점검(`compile_check`)에서 즉시 탈락시킵니다.
-3. **0A 개방회로(Open-Circuit) 보상 해킹 차단**:
-   - 핀을 내부적으로 끊어 놓으면 대기전류($I_{CC}$)나 입력 바이어스 전류($I_B$)가 $0\text{ A}$로 측정되어 데이터시트의 `MAX` 상한 조건(예: $I_{CC} \le 0.8\text{ mA}$)을 거짓 통과하는 현상이 발생합니다.
-   - 평가기(`evaluate`)는 전원 전류가 $1\text{ pA}$ 미만일 경우 이를 **"개방회로 불량(Open-Circuit Failure)"** 으로 즉시 판정하여 `FAIL` 처리합니다.
+| 대상 IC (평가 데이터셋) | 과거 비게이트 통과율 (착시 수치) | 과거 넷리스트의 PDG 게이트 판정 (차단 단계 및 사유) | 수리된 순수 물리 BJT 넷리스트 — 행 통과율 (Row Pass) | 수리된 순수 물리 BJT 넷리스트 — 고유 지표 통과율 (Unique Kind) | 수리된 물리 BJT 회로 아키텍처 및 산출물 |
+|---|---|---|---|---|---|
+| **LM393**<br/>([`lm393.json`](benchmarks/pdg_groundtruth/lm393.json), 16개 스펙) | **0.0 %**<br/>*(빈 서브서킷 스텁)* | ❌ **0.0 % (0/16)**<br/>`PDG_STAGE0_TOPOLOGY`: 능동 트랜지스터 0개 | ✅ **100.0 % (16/16)**<br/>*(Hard-limit: 100.0%)* | ✅ **100.0 % (9/9 종)** | TI 8-BJT 아키텍처: 2-$V_{BE}$ 마스터 바이어스 + 달링턴 PNP 입력단 + NPN 미러 부하 + 비보상 이득단 + 오픈 컬렉터 NPN 출력단 ([`LM393_FINAL_HARNESS2.cir`](output_harness2_netlist/LM393_FINAL_HARNESS2.cir)) |
+| **LM393B**<br/>([`LM393B_knowledge_graph.json`](output_interactive/task_1792999597_f57e6c/LM393B_knowledge_graph.json), 90개 스펙) | *31.0 % $\to$ 51.5 %*<br/>*(착시 수치)* | ❌ **0.0 % (0/90)**<br/>`PDG_STAGE2_DC_TRANSFER`: $500\text{ }\Omega$ 미러 병렬 저항으로 인해 $V(\text{OUT})=0.12\text{ V}$ 고정 ($\Delta V = 0.0\text{ V}$) | ✅ **98.9 % (89/90)**<br/>*(측정 커버리지 100%, 90/90 계측)* | ✅ **88.9 % (8/9 종)**<br/>*(`VIO`, `IB`, `IOS`, `IQ`, `VOL`, `IOL`, `IOH`, `tresp` 전수 통과)* | $500\text{ }\Omega$ 병렬 단락 저항 제거($20\sim 50\text{ M}\Omega$ 블리더), 밀러 커패시터 제거($t_{\text{resp}} \approx 270\text{ ns}$), $R_{e,\text{out}}=1\text{ }\Omega$ ($V_{OL}=66.6\text{ mV}$) ([`LM393B_iter2.cir`](output_interactive/task_1792999597_f57e6c/LM393B_iter2.cir)) |
+| **TL431**<br/>([`tl431.json`](benchmarks/pdg_groundtruth/tl431.json), 6개 스펙) | *40.0 %*<br/>*(착시 수치)* | ❌ **0.0 % (0/6)**<br/>`PDG_STAGE0_TOPOLOGY`: 내부 독립 전압원(`Vbias 2.5V`), 미선언 `VCC`, 글로벌 노드 `0` 직접 누설 | ✅ **100.0 % (6/6)**<br/>*(Hard-limit: 100.0%)* | ✅ **100.0 % (5/5 종)**<br/>*(`vref`, `dvref_dvka`, `iref`, `imin`, `ioff` 전수 통과)* | 순수 3핀(`CATHODE`, `REF`, `ANODE`) 내부 $V_{BE}$ 스케일링 오차 증폭기 + PNP 감지단 + 달링턴 NPN 캐소드 션트 드라이버 ([`TL431_FINAL_HARNESS2.cir`](output_harness2_netlist/TL431_FINAL_HARNESS2.cir)) |
+| **LM358**<br/>([`lm358.json`](benchmarks/pdg_groundtruth/lm358.json), 31개 스펙) | *25.0 %*<br/>*(착시 수치)* | ❌ **0.0 % (0/31)**<br/>`PDG_STAGE0_TOPOLOGY`: 출력 MOSFET 게이트가 `V+`/`V-`에 직결되어 입력-출력 신호 경로 단절 | ✅ **100.0 % (31/31)**<br/>*(Hard-limit: 100.0%)* | ✅ **100.0 % (14/14 종)**<br/>*(`vos`, `ib`, `ios`, `iq`, `aol_db`, `gbw`, `pm`, `cmrr_db`, `psrr_db`, `sr`, `vswing`, `iout`, `isc`, `en` 전수 통과)* | PNP 차동 입력단 + NPN 미러 + 달링턴 버퍼 밀러 보상 2단($C_c=34\text{ pF}, R_z=250\text{ }\Omega$) + Class-AB 출력단 + `Q13` 정전류 풀다운 싱크 ([`LM358_FINAL_HARNESS2.cir`](output_harness2_netlist/LM358_FINAL_HARNESS2.cir)) |
 
 ---
 
-## 📊 현재 달성 성과 (Verified Results)
+## 🏗️ 시스템 아키텍처: Dual-Harness² ($C_1\sim C_8$ & $V_1\sim V_3$) 구조
 
-### 1. 데이터시트 지식화 (Phase 1 & 2) — 8개 IC Ground-Truth 벤치마크
-수작업으로 모든 핀·의존성·스펙 행·페이지·원문 인용을 라벨링한 8개 표준 IC([`benchmarks/pdg_groundtruth/`](benchmarks/pdg_groundtruth)) 대비 측정 결과입니다.
+**AnalogVerifier**는 회로 합성기(`Synthesizer Harness²`)와 검증기(`Verifier Harness²`)를 모두 명시적인 모듈 트리로 정의하여 관리합니다.
 
-| 추출 모델 (Provider) | 8개 IC 평균 GT 점수 | IC당 소요 시간 | 비고 |
+### 1. Synthesizer Harness² ($C_1 \sim C_8$) — 회로 합성 하네스
+
+| 코드 | 모듈 명칭 | 대응 파일 | 역할 및 현재 상태 |
+|---|---|---|---|
+| **`C1`** | **System Prompt & Domain Directives** | [`harness_tree.py`](ai_analog_designer/circuit_synthesis/harness2/harness_tree.py) | 대상 IC 패밀리별 물리 토폴로지 설계 지침 (예: 비교기 무보상 오픈 컬렉터, 달링턴 PNP 입력단 등) |
+| **`C2`** | **Syntax & Physical Guardrails** | [`netlist_validator.py`](ai_analog_designer/circuit_synthesis/netlist_validator.py) | SPICE 문법 불변성, 마크다운 `-` 주석 자동 정화, 중복 `.model` 제거, **Behavioral/내부 독립 전원/노드 `0` 누설 절대 금지** |
+| **`C3`** | **Experience Memory & Convergence Traps** | [`EXPERIENCE.json`](harness2_library/comparator/LM393B/EXPERIENCE.json) | `500 Ω` 미러 병렬 저항 바이어스 차단 사고, 부유 노드(`N_G2`) 방지 블리더 저항 등 수렴/회로 결함 방지 레시피 |
+| **`C4`** | **Tool Guidance & PDG Alignment** | [`harness_tree.py`](ai_analog_designer/circuit_synthesis/harness2/harness_tree.py) | LTspice `.meas` 측정 구간과 PDG 전원/바이어스 정착 스케줄 $\sigma(p)$ 정렬 |
+| **`C5`** | **Topology Blueprints (Skills)** | [`EXPERIENCE.json`](harness2_library/comparator/LM393B/EXPERIENCE.json) | PDG 게이트를 통과한 검증된 서브서킷 블루프린트 스냅샷 |
+| **`C6`~`C8`** | **Scripts / Subagents / Plugins** | [`harness_tree.py`](ai_analog_designer/circuit_synthesis/harness2/harness_tree.py) | 확장 스크립트 및 보조 진단 모듈 슬롯 |
+
+### 2. Verifier Harness² ($V_1 \sim V_3$) — 물리 검증 하네스
+
+| 코드 | 모듈 명칭 | 대응 파일 | 역할 및 이번 업데이트에서의 핵심 개선 사항 |
+|---|---|---|---|
+| **`V1`** | **SpecClassifier & Condition Parser** | [`spec_planner.py`](ai_analog_designer/neuro_symbolic_verifier/spec_planner.py) | 데이터시트 스펙 행을 39개 표준 `kind`로 분류하고 시험 조건 파싱.<br/>• **개선**: 단일 전원 Op-Amp의 `RL ≤ 10 kΩ connected to (V–)` 조건(`rl_to = "vn"`) 정밀 파싱 추가 |
+| **`V2`** | **Deterministic & Staged PDG Testbench** | [`deterministic_testbench.py`](ai_analog_designer/neuro_symbolic_verifier/deterministic_testbench.py) | PDG 4단계 인과 검증 및 LTspice 측정 픽스처.<br/>• **개선 1**: **Stage 0(토폴로지/신호경로) $\to$ Stage 1(DC 바이어스) $\to$ Stage 2(DC 전달) $\to$ Stage 3(개별 스펙)** 순차 게이트 구현<br/>• **개선 2**: 미사용 비교기 채널을 단위 이득 팔로워로 묶어 발진시키던 `park_unused` 버그 수정<br/>• **개선 3**: 양방향 오프셋(`±2.5 mV`)의 `min` 절대값 변환 오류, `opamp_iout` 과구동 극성 반전 오류, `shunt_imin` 램프 방향(`RISE=1`) 오류 수정<br/>• **개선 4**: 중복 행 착시를 막는 고유 지표 통과율(`unique_kind_pass_rate_pct`) 및 단방향 `PASS_TYP` 판정 도입 |
+| **`V3`** | **UnitNormalizer** | [`units.py`](ai_analog_designer/neuro_symbolic_verifier/units.py) | `V/mV` $\to$ `dB`, `mV/V` $\to$ `dB`, `nA/μA/mA` $\to$ `A` 등 물리 단위 정규화 |
+
+> 💡 **Golden Oracle Gatekeeper ([`golden_oracle_anchor.py`](ai_analog_designer/neuro_symbolic_verifier/harness2_verifier/golden_oracle_anchor.py))**:
+> LLM이 검증기($V_1\sim V_3$)에 새로운 규칙을 제안할 때 기준을 낮춰 불량 회로를 통과시키는 환각을 막기 위해, 제조사 공인 매크로모델(TI LM393, LM358, NE555, TL431)을 **100% 통과**할 때만 [`VERIFIER_EXPERIENCE.json`](harness2_library/verifier_experience/VERIFIER_EXPERIENCE.json)에 병합합니다.
+
+---
+
+## 📄 데이터시트 파싱 (ParseBench 기반 Phase 1 & 2) 및 검증기 캘리브레이션
+
+### 1. ParseBench 기반 PDF $\to$ HKG/PDG 추출 원리
+- [`pdf_parser.py`](ai_analog_designer/pdf_to_graph/pdf_parser.py)는 `ParseBench`의 레이아웃 인지형 PDF 파싱 기법(`pdfplumber` 단어 2차원 좌표 클러스터링)을 계승하여, 다단 표의 열 구조를 복원하고 각 수치에 `{MIN}`, `{TYP}`, `{MAX}` 태그를 부착합니다.
+- [`hardware_kg_builder.py`](ai_analog_designer/pdf_to_graph/hardware_kg_builder.py)와 [`pdg_extractor.py`](ai_analog_designer/pdf_to_graph/pdg_extractor.py)는 파싱된 표에서 전기적 스펙(`ELECTRICAL`)과 정격(`ABS_MAX`, `RECOMMENDED`, `ESD`)을 분리하고, 포트 간 인과 의존성 DAG 및 시작 스케줄 $\sigma(p)$를 생성합니다.
+
+| 추출 모델 (Provider) | 8개 표준 IC 평균 GT 점수 | IC당 소요 시간 | 비고 |
 |---|---|---|---|
 | **`openai/gpt-6-luna` (OpenRouter)** | **95.2 / 100** | 28–120 s | 정밀도 최고 기록 |
 | **`nvidia/nemotron-3-ultra-550b-a55b` (NVIDIA NIM)** | **94.0 / 100** | 80–200 s | 무료 API 크레딧 기반 기본 추출/합성 모델 |
 | `z-ai/glm-5.3-flash` | 85.1 / 100 | 24–68 s | 고속 경량 폴백 모델 |
 | `deepseek-ai/deepseek-v4.1-flash` (NVIDIA NIM) | 82.0 / 100 | 20–50 s | 1차 고속 폴백 모델 |
 
-<details>
-<summary><b>📋 8개 표준 IC별 상세 Ground-Truth 정확도 표 펼치기</b></summary>
-
-| IC 소자 (종류) | 종합 GT 점수 | 핀 P/R | 인과 의존성 P/R | 전기 스펙 Recall | 수치 정확도 | 정격 Leak (낮을수록 우수) |
-|---|---|---|---|---|---|---|
-| **LM358** (Dual Op-Amp) | **100.0** | 1.00 / 1.00 | 1.00 / 1.00 | 1.00 | 1.00 | **0.00** |
-| **NE555** (Precision Timer) | **98.9** | 1.00 / 1.00 | 1.00 / 0.92 | 1.00 | 0.96 | **0.00** |
-| **LM393** (Dual Comparator) | **97.5** | 1.00 / 1.00 | 1.00 / 1.00 | 1.00 | 1.00 | **0.00** |
-| **OPA2134** (Audio Op-Amp) | **97.3** | 1.00 / 1.00 | 1.00 / 1.00 | 0.92 | 0.92 | **0.00** |
-| **LM386** (Audio Power Amp) | **94.2** | 1.00 / 0.88 | 0.58 / 0.88 | 1.00 | 1.00 | **0.00** |
-| **INA128** (Instrumentation Amp) | **92.8** | 1.00 / 0.88 | 0.60 / 0.86 | 0.96 | 0.99 | 0.06 |
-| **TL431** (Programmable Shunt Ref) | **90.5** | 1.00 / 1.00 | 0.67 / 1.00 | 1.00 | 0.90 | **0.00** |
-| **LM317** (Adjustable Regulator) | **90.4** | 1.00 / 1.00 | 0.67 / 1.00 | 0.95 | 0.96 | **0.00** |
-
-</details>
-
----
-
-### 2. 검증기 자체 신뢰도 검증 (`tools/calibrate_testbench.py`)
-검증 픽스처가 올바른 회로를 통과시키고 다른 특성의 회로를 걸러내는지 제조사 공인 SPICE 모델로 검증한 결과입니다 ([`benchmark_results/testbench_calibration/`](benchmark_results/testbench_calibration)):
+### 2. 제조사 공인 SPICE 모델 기반 검증기 캘리브레이션 (`tools/calibrate_testbench.py`)
 
 | 검증 대상 | 측정 커버리지 | PASS | FAIL | 결과 해석 |
 |---|---|---|---|---|
@@ -183,108 +126,45 @@ flowchart LR
 
 ---
 
-### 3. 순수 트랜지스터 수준(Zero-Behavioral) 회로 합성 및 진화 성과
-초기 버전(2026-10-21)에서는 합성된 트랜지스터 넷리스트가 컴파일 오류 및 `.op` 미수렴에 막혀 통과율이 **0.0%** 였으나, **Dual-Harness²의 `Probe-Propose-Compose` 진화 루프**와 경험 라이브러리([`harness2_library/`](harness2_library)) 축적을 통해 실제 트랜지스터 넷리스트 합성에 성공했습니다.
-
-| 대상 IC | 소자 분류 | 초기 통과율 (Base) | Harness² 진화 후 통과율 | 합성된 물리 아날로그 토폴로지 요약 |
-|---|---|---|---|---|
-| **LM393 / LM393B** | Dual Bipolar Comparator | 0.0 % / 31.0 % | **51.5 % ~ 72.7 %**<br/>*(Web Studio E2E: 35/68 통과)* | Bandgap($1.24\text{ V}$) + PTAT 바이어스 코어, 대면적 PNP 차동 입력단(에미터 퇴화 저항), NPN 커런트 미러 능동 부하, 공통 에미터 이득단($C_c+R_z$ 보상), **Baker Clamp 쇼트키 다이오드 포함 오픈 컬렉터 NPN 출력단** ([`LM393B/EXPERIENCE.json`](harness2_library/comparator/LM393B/EXPERIENCE.json)) |
-| **TL431** | Precision Shunt Regulator | 0.0 % | **40.0 %** | Bandgap 레퍼런스 코어 + Super-Beta PNP 차동 오차 증폭기 + 달링턴 NPN 션트 패스 트랜지스터 ([`TL431/EXPERIENCE.json`](harness2_library/voltage_reference/TL431/EXPERIENCE.json)) |
-| **LM358** | Dual Operational Amplifier | 0.0 % | **25.0 %** | 2단 PMOS/PNP 입력 차동 증폭단 + NMOS/NPN 미러 부하 + 공통 소스/에미터 출력단 + Miller 보상 커패시터($C_c=15\sim30\text{ pF}$) 및 RHP 영점 제거 저항($R_z$) ([`LM358/EXPERIENCE.json`](harness2_library/operational_amplifier/LM358/EXPERIENCE.json)) |
-
----
-
-### 4. 인터랙티브 Web Studio 및 브라우저 E2E 검증
-[`run_studio.py`](run_studio.py)를 실행하면 브라우저(`http://localhost:8080`)에서 데이터시트 업로드부터 PDG 시각화, 시퀀싱 타임라인 탐색, Dual-Harness² 폐루프 회로 합성 및 스펙 검증까지 전 과정을 실시간으로 조작할 수 있습니다.
-
-- **실제 브라우저 검증 ([`tests/test_web_studio_pdg.py`](tests/test_web_studio_pdg.py))**: Playwright Chromium 헤드리스 브라우저를 통해 샘플 IC 로드, PDG SVG 그래프 렌더링, 전원 시퀀싱 타임라인 슬라이더 동작, 경로 샌드박스 보안(`HTTP 400` 차단), 전체 폐루프 합성 완료까지 E2E 자동화 검증을 통과했습니다 (스크린샷: [`benchmark_results/web_studio/`](benchmark_results/web_studio)).
-
----
-
 ## ⚠️ 현재의 한계점 및 기술적 과제 (Current Limitations)
 
-본 시스템은 데이터시트 파싱, 검증기 신뢰성 확보, 그리고 첫 번째 순수 트랜지스터 수준 수렴 회로 합성에 성공했으나, 상용 수준의 완전 자동 설계에 도달하기 위해 다음의 명확한 한계점들을 안고 있습니다:
-
-1. **다중 스펙 동시 만족을 위한 연속 파라미터 사이징(Continuous Sizing)의 한계**
-   - 현재 LLM 기반의 `HarnessProposer`는 회로 토폴로지 구성(예: Miller 보상 추가, Baker Clamp 추가, 부유 노드 방지 저항 추가)과 거시적 바이어스 설정에는 강점을 보이지만, **상충하는 수십 개의 세부 스펙(예: $V_{IO} < 2\text{ mV}$를 맞추면서 동시에 $I_{CC}$, 응답 지연 시간 $t_{resp}$, 고전압 $36\text{ V}$ 구동 시의 누설 전류 $I_{OH}$를 모두 만족)** 을 동시에 정밀 튜닝하는 데에는 한계가 있습니다 (`LM393B` 기준 51.5%~72.7% 달성 후 정체).
-   - **개선 방향**: LLM이 토폴로지와 초기 동작점 영역을 잡은 뒤, 내부 루프에서 Bayesian Optimization 또는 Nelder-Mead / 차분 진화(Differential Evolution) 같은 수치 최적화기를 결합하여 트랜지스터 $W/L$, `AREA`, 저항값을 미세 조정하는 하이브리드 사이징 도입이 필요합니다.
-
+1. **LLM 단독 합성 시의 아날로그 바이어스/사이징 오류 가능성 및 수치 최적화 결합 필요성**
+   - 과거 `LM393B_iter2.cir` 사례($500\text{ }\Omega$ 미러 병렬 저항으로 인한 바이어스 차단)에서 확인되었듯, LLM이 토폴로지를 생성할 때 소자 값의 물리적 스케일($\Omega$ vs $\text{M}\Omega$)이나 바이어스 루프 극성을 실수할 수 있습니다.
+   - 이제 **PDG Stage 0~2 인과 게이트**가 이러한 불량 넷리스트를 즉시 `0.0%`로 차단하고 구체적인 노드 전압($V_{\text{low}}, V_{\text{high}}, I_Q$) 진단 피드백을 반환하지만, 폐루프 합성에서 다중 스펙을 한 번에 만족시키기 위해서는 LLM 토폴로지 합성과 수치 최적화(Differential Evolution / Bayesian Sizing)의 결합이 필요합니다.
 2. **대형·고복잡도 혼합신호 IC (예: `TPA3116D2` 등 30핀 이상 소자)에서의 확장성 병목**
-   - 8핀~14핀 규모의 표준 아날로그 IC(Op-Amp, Comparator, LDO, Reference)에서는 안정적으로 동작하지만, 32핀 Class-D 오디오 앰프(`tpa3116d2.pdf`)처럼 내부 블록이 방대하고(PWM 삼각파 발진기, 차동 변조기, 데드타임 제어기, H-브리지 파워 FET, 과전류/열 보호 회로) 핀 텍스트만 30,000자에 달하는 소자에서는 두 가지 병목이 발생합니다:
-     - **LLM 추론 지연(TTFT Timeout)**: 대용량 핀/스펙 프롬프트가 동시 호출될 때 550B 모델의 첫 토큰 대기 시간이 90초를 초과하며 타임아웃 또는 폴백 연쇄 실패가 발생할 수 있습니다.
-     - **단일 넷리스트 수렴 난이도**: 수백 개의 트랜지스터가 필요한 대형 혼합신호 IC를 계층 분할 없이 한 번에 순수 트랜지스터 수준으로 합성하면 LTspice 과도 해석(`.tran`)에서 수렴 실패 확률이 급격히 높아집니다.
-
-3. **표준 SPICE `.model` 카드와 실제 파운드리 공정(PDK) 간의 물리적 격차**
-   - 현재 합성기는 외부 상용 PDK(예: SkyWater 130nm, TSMC 180nm) 없이 LLM이 생성한 표준 Gummel-Poon(BJT) 및 Level-1/3 MOSFET `.model` 파라미터를 사용합니다.
-   - 이로 인해 기생 커패시턴스, 온도 드리프트($\text{ppm}/^\circ\text{C}$), 전압에 따른 비선형 출력 임피던스 변화 등 고차 물리 현상을 제조사 실리콘 수준으로 정밀하게 재현하는 데 본질적 한계가 존재합니다.
-
-4. **무료/외부 LLM API의 응답 편차 및 추론(Reasoning) 토큰 간섭**
-   - 비용 절감을 위해 NVIDIA NIM 무료 크레딧 및 경량 폴백 모델을 활용할 때, API 서버 부하에 따라 응답 시간이 3초에서 90초 이상으로 크게 흔들리며, 일부 추론형 모델(`deepseek`, `glm`)이 최종 JSON/넷리스트를 `<think>` 블록 내부에만 출력하여 파싱 오류가 발생하는 등 클라우드 API 의존성에 따른 불안정성이 남아 있습니다.
+   - 8핀~14핀 규모의 표준 아날로그 IC(Op-Amp, Comparator, LDO, Shunt Reference, Timer)에서는 전 과정이 안정적으로 동작하지만, 수백 개의 트랜지스터와 PWM 제어 루프가 결합된 대형 혼합신호 IC에서는 계층적 블록 분할 합성이 필요합니다.
+3. **표준 SPICE `.model` 카드와 상용 파운드리 PDK 간의 격차**
+   - 현재 합성기는 외부 상용 PDK 없이 표준 Gummel-Poon(BJT) 및 MOSFET `.model` 카드를 사용하므로, 온도 드리프트($\text{ppm}/^\circ\text{C}$) 및 고차 기생 효과를 실리콘 수준으로 재현하는 데에는 한계가 있습니다.
 
 ---
 
-## 📂 디렉토리 및 아키텍처 구조
-
-최근 레포지토리 대청소를 통해 구버전(v1) 실험 파일과 시뮬레이션 바이너리 찌꺼기를 모두 [`legacy/`](legacy) 및 [`docs/legacy_reports/`](docs/legacy_reports)로 아카이빙하고, 핵심 아키텍처 중심으로 깔끔하게 재편했습니다.
+## 📂 디렉토리 구조
 
 ```text
 analogverifier/
 ├── ai_analog_designer/                  # 핵심 자율 설계 프레임워크 패키지
 │   ├── autonomous_design_agent.py       # 5-Phase 전체 파이프라인 및 Dual-Harness² 총괄 오케스트레이터
-│   ├── llm_client.py                    # Provider 공용 LLM 클라이언트 (NVIDIA NIM / OpenRouter, 폴백·타임아웃·비용 관리)
-│   ├── pdf_to_graph/                    # [Phase 1 & 2] 데이터시트 파싱 및 그래프 추출
-│   │   ├── pdf_parser.py                # 좌표 기반 표 복원 및 {MIN}/{TYP}/{MAX} 열 태깅
-│   │   ├── hardware_kg_builder.py       # 페이지별 병렬 HKG 추출 및 스펙 카테고리 분류
-│   │   ├── pdg_extractor.py             # 인과적 포트 의존성 그래프(PDG) 및 시작 순서 σ(p) 산출
-│   │   ├── pdg_fidelity_verifier.py     # 무라벨 출처 감사(Audit) 및 Ground-Truth 비교 채점기
-│   │   └── pdg_visualizer.py            # 인터랙티브 HTML/SVG PDG 시각화 생성기
-│   ├── circuit_synthesis/               # [Phase 3] 순수 물리 아날로그 회로 합성
-│   │   ├── ai_circuit_architect.py      # 트랜지스터 수준 SPICE 넷리스트 합성기
-│   │   ├── netlist_validator.py         # Behavioral 구문 차단, 중첩 서브서킷 보정, 문법 검증기
-│   │   └── harness2/                    # Synthesizer Harness² (C1~C8 자율 진화 엔진)
-│   │       ├── harness_tree.py          # C1~C8 8계층 하네스 트리 데이터 구조 및 불변 가드레일
-│   │       ├── harness_proposer.py      # 실패 스펙/로그 기반 하네스 패치 제안기 (Propose)
-│   │       ├── harness2_architect.py    # Probe-Propose-Compose 자기진화 루프 실행기
-│   │       └── experience_library.py    # 소자군별 성공 레시피 영구 저장·검색기
-│   ├── neuro_symbolic_verifier/         # [Phase 4 & 5] 하이브리드 물리 검증 및 Verifier Harness²
-│   │   ├── spec_planner.py              # 소자 분류, 핀 역할 매핑, 스펙 측정 계획 수립 (V1)
-│   │   ├── deterministic_testbench.py   # 고정 LTspice 픽스처, .op 사전 점검, 능동소자·0A 해킹 검증 (V2)
-│   │   ├── dynamic_testbench_harness.py # 미지원 스펙용 LLM 동적 테스트벤치 + NumPy/FFT 수식 후처리
-│   │   ├── units.py                     # 물리 단위 정규화 (dB, V/μs, nV/√Hz 등) (V3)
-│   │   ├── ltspice_runner.py            # 헤드리스 LTspice 프로세스 실행 및 .log/.raw 파서
-│   │   ├── verification_flow.py         # 컴파일 점검 → 결정론적 픽스처 → 동적 픽스처 → 평가 통합 플로우
-│   │   └── harness2_verifier/           # Verifier Harness² (V1~V3 자율 진화 엔진)
-│   │       ├── harness2_verifier_tree.py      # V1(분류기), V2(픽스처), V3(단위) 진화 트리
-│   │       ├── harness2_verifier_architect.py # 미지원 스펙 발생 시 V1~V3 확장 제안기
-│   │       ├── golden_oracle_anchor.py        # 제조사 공인 매크로모델 기반 무결성 게이트키퍼
-│   │       └── dual_harness2_coordinator.py   # 검증기(V1~V3) ↔ 합성기(C1~C8) 공진화 조정기
+│   ├── llm_client.py                    # Provider 공용 LLM 클라이언트 (NVIDIA NIM / OpenRouter)
+│   ├── pdf_to_graph/                    # [Phase 1 & 2] ParseBench 기반 데이터시트 파싱 및 PDG 추출
+│   ├── circuit_synthesis/               # [Phase 3] 순수 물리 아날로그 회로 합성 및 문법/모델 정화기
+│   ├── neuro_symbolic_verifier/         # [Phase 4 & 5] PDG 4단계 인과 검증기 및 Verifier Harness²
+│   │   ├── spec_planner.py              # 스펙 분류 및 시험 조건 파서 (V1)
+│   │   ├── deterministic_testbench.py   # PDG Stage 0~3 인과 게이트 및 결정론적 LTspice 픽스처 (V2)
+│   │   ├── units.py                     # 물리 단위 정규화 (V3)
+│   │   └── verification_flow.py         # PDG 게이트 → 단계별 픽스처 → 행/고유지표 이중 평가 플로우
 │   └── web_studio/                      # 실시간 브라우저 UI 서버
-│       ├── studio_server.py             # REST API, 비동기 태스크 큐, HKG 캐시, 보안 샌드박스
-│       └── static/index.html            # 다크모드 대시보드 (PDG 그래프, 타임라인, 실시간 로그)
-├── harness2_library/                    # Dual-Harness²가 축적한 영구 진화 지식 베이스
-│   ├── INDEX.json                       # 축적된 소자별 진화 경험 인덱스
-│   ├── comparator/LM393B/               # LM393B 진화 레시피 및 하네스 스냅샷
-│   ├── operational_amplifier/LM358/     # LM358 진화 레시피
-│   ├── voltage_reference/TL431/         # TL431 진화 레시피
-│   └── verifier_experience/             # Golden Oracle을 통과한 V1~V3 검증기 확장 규칙
+├── output_harness2_netlist/             # PDG 4단계 검증을 통과한 순수 물리 BJT 넷리스트 및 리포트
+│   ├── LM393_FINAL_HARNESS2.cir         # LM393 (16/16 = 100.0% 통과)
+│   ├── TL431_FINAL_HARNESS2.cir         # TL431 (6/6 = 100.0% 통과)
+│   └── LM358_FINAL_HARNESS2.cir         # LM358 (31/31 = 100.0% 통과)
+├── harness2_library/                    # 소자군별 영구 진화 지식 베이스 (교정된 블루프린트 포함)
 ├── benchmarks/pdg_groundtruth/          # 8개 표준 IC 수작업 Ground-Truth 라벨 데이터셋
-├── benchmark_results/                   # PDG 정확도, 테스트벤치 캘리브레이션, Web Studio 스크린샷
-├── testcases/                           # 테스트용 표준 IC 데이터시트 PDF 모음 (LM358, LM393, NE555 등)
-├── tools/                               # 캘리브레이션(calibrate_testbench.py) 및 LLM 벤치마크 도구
-├── tests/                               # 단위 테스트 및 Playwright 브라우저 E2E 테스트
-├── run_studio.py                        # 인터랙티브 Web Studio 실행 엔트리포인트
-├── run_interactive_designer.py          # CLI 기반 E2E 자율 설계 실행 엔트리포인트
-└── run_harness2_netlist_loop.py         # Dual-Harness² 집중 진화 벤치마크 실행 스크립트
+└── tests/                               # 단위 테스트 및 Playwright 브라우저 E2E 테스트
 ```
-
-> 💡 **실행 산출물 폴더(`output_interactive/`) 안내**
-> Web Studio에서 회로를 합성할 때마다 `output_interactive/task_<유닉스타임스탬프>_<6자리해시>/` 형태의 고유 작업 폴더가 생성됩니다. 각 폴더 내부에는 추출된 지식 그래프(`*_knowledge_graph.json`), 세대별 합성 넷리스트(`*_iter1.cir`, `*_BEST.cir`), LTspice 측정 리포트(`*_verification_report.json`), 그리고 실시간 진행 상태(`progress.json`)가 격리 저장됩니다.
 
 ---
 
 ## ⚡ 빠른 시작 (Quick Start)
-
-### 1. 환경 설치
 
 ```powershell
 git clone https://github.com/eethsc/analogverifier.git
@@ -292,44 +172,19 @@ cd analogverifier
 python -m venv .venv
 .venv\Scripts\Activate.ps1
 pip install -r requirements.txt playwright
-python -m playwright install chromium-headless-shell
 ```
 
-- **LTspice 설치 필수**: Windows 환경에 LTspice XVII 또는 LTspice 24가 설치되어 있어야 합니다. 기본 설치 경로를 자동 탐색하며, 경로가 다를 경우 `.env`에 `LTSPICE_PATH="C:\...\LTspice.exe"`를 지정할 수 있습니다.
+- **인터랙티브 Web Studio 실행**:
+  ```powershell
+  python run_studio.py --port 8080
+  ```
+- **Dual-Harness² 벤치마크 루프 실행**:
+  ```powershell
+  python run_harness2_netlist_loop.py --devices lm393 tl431 lm358 --iterations 3
+  ```
 
-### 2. API 키 설정 (`.env`)
+---
 
-프로젝트 루트에 `.env` 파일을 생성하고 API 키를 입력합니다 (`NVIDIA_API_KEY`가 존재하면 기본적으로 무료 크레딧 기반의 NVIDIA NIM 백엔드로 동작합니다).
+## 📜 라이선스 (License)
 
-```env
-# NVIDIA NIM 백엔드 (기본 권장)
-NVIDIA_API_KEY="nvapi-..."
-
-# OpenRouter 백엔드 병행/대체 사용 시
-OPENROUTER_API_KEY="sk-or-v1-..."
-```
-
-### 3. 주요 실행 명령어
-
-```powershell
-# 1) 인터랙티브 Web Studio 실행 (http://localhost:8080)
-python run_studio.py --port 8080
-
-# 2) CLI에서 단일 데이터시트 대상 Dual-Harness² 폐루프 합성·검증 실행
-python run_interactive_designer.py --pdf testcases/lm393.pdf --iterations 3 --no-open --output-dir output_e2e/lm393
-
-# 3) Dual-Harness² 공진화 집중 루프 실행 (Probe-Propose-Compose)
-python run_harness2_netlist_loop.py --ic LM393 --rounds 2
-
-# 4) 순수 아날로그 규칙 및 Dual-Harness² 무결성 단위 테스트 실행
-python -m pytest tests/test_dual_harness2_and_analog_rules.py -v
-
-# 5) Web Studio 브라우저 E2E 테스트 (Playwright Chromium)
-python tests/test_web_studio_pdg.py --ic LM393
-
-# 6) 제조사 공인 매크로모델 기반 테스트벤치 캘리브레이션 검증
-python tools/calibrate_testbench.py
-
-# 7) 8개 IC 대상 PDG 충실도 벤치마크 채점 (캐시 재사용 시 --reuse)
-python run_pdg_benchmark.py --reuse
-```
+본 프로젝트는 학술 연구 및 엔지니어링 검증 목적으로 공개되어 있습니다.
