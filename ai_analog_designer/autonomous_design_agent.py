@@ -37,12 +37,14 @@ class AutonomousAnalogDesignAgent:
         output_dir: str = "output_design",
         simulator_path: Optional[str] = None,
         max_iterations: int = 10,
-        reuse_hkg_path: Optional[str] = None
+        reuse_hkg_path: Optional[str] = None,
+        use_hermes: bool = True
     ):
         self.output_dir = os.path.abspath(output_dir)
         os.makedirs(self.output_dir, exist_ok=True)
         self.max_iterations = max_iterations
         self.reuse_hkg_path = reuse_hkg_path
+        self.use_hermes = use_hermes
 
         self.llm = OpenRouterClient(api_key=api_key, default_model=model)
         self.pdf_parser = PDFDatasheetParser()
@@ -52,6 +54,14 @@ class AutonomousAnalogDesignAgent:
         self.harness2_architect = Harness2CircuitArchitect(llm_client=self.llm)
         self.dynamic_harness = DynamicTestbenchHarness(llm_client=self.llm, simulator_path=simulator_path)
         self.netlist_validator = NetlistValidator()
+
+        # Hermes Agent Framework tuned by Harness²
+        from .hermes_core import HermesAnalogWorkflowRunner
+        self.hermes_runner = HermesAnalogWorkflowRunner(
+            output_dir=self.output_dir,
+            llm_client=self.llm,
+            max_turns=max_iterations
+        )
 
         # Dual-Harness² Verifier & Co-Evolution Coordinator
         from ai_analog_designer.neuro_symbolic_verifier.harness2_verifier import (
@@ -219,7 +229,8 @@ Return ONLY valid JSON.
         user_prompt: Optional[str] = None,
         max_pages: int = 12,
         progress_callback: Optional[Any] = None,
-        max_iterations: Optional[int] = None
+        max_iterations: Optional[int] = None,
+        use_hermes: Optional[bool] = None
     ) -> Dict[str, Any]:
         """
         Executes the entire end-to-end pipeline:
@@ -376,206 +387,293 @@ Return ONLY valid JSON.
             part_name=part_name
         )
 
-        for iteration in range(1, total_loop_budget + 1):
-            if progress_callback:
-                progress_callback(3, f"Phase 3: Harness² Synthesis (Loop {iteration})", "Synthesizing convergent netlist via recursive Harness² meta-engine...")
+        enable_hermes = use_hermes if use_hermes is not None else self.use_hermes
 
-            logger.info(f"--- Iteration {iteration}/{total_loop_budget}: Harness² Netlist Synthesis ---")
-            self.tracer.start_span(3, f"Phase 3: Harness² Netlist Synthesis (Loop {iteration})", inputs={
-                "iteration": iteration,
+        if enable_hermes:
+            if progress_callback:
+                progress_callback(3, "Phase 3: Hermes Agent Autonomous Synthesis", "Synthesizing circuit via Hermes Agent tuned by Harness² (C1-C8)...")
+
+            self.tracer.start_span(3, "Phase 3: Hermes Autonomous Synthesis & Verification", inputs={
                 "subckt_name": subckt_name,
-                "user_prompt": user_prompt
+                "category": dut_category,
+                "user_prompt": user_prompt,
+                "turns_budget": total_loop_budget
             })
 
-            # 3.1 Synthesis under Harness² (Iteration 1: Baseline; Iteration > 1: Contrastive Propose-Probe-Compose)
-            if iteration == 1 or best_eval is None:
-                synth_res = self.harness2_architect.synthesize_candidate(
-                    tree=active_harness_tree,
-                    ic_info=ic_info,
+            def eval_probe(p_netlist: str, p_tag: str) -> Dict[str, Any]:
+                return self._evaluate_netlist_unified(
+                    netlist_code=p_netlist,
+                    subckt_name=subckt_name,
                     pins=pins,
                     specifications=specifications,
-                    pdg_schedule={k: v * 1e-6 for k, v in pdg_schedule.items()},
-                    measurement_plan=self.spec_plan,
-                    user_prompt=user_prompt,
-                    prior_feedback=current_feedback
+                    pdg_schedule=pdg_schedule,
+                    tag=p_tag
                 )
-            else:
-                def eval_probe(p_netlist: str, p_tag: str) -> Dict[str, Any]:
-                    return self._evaluate_netlist_unified(
-                        netlist_code=p_netlist,
-                        subckt_name=subckt_name,
-                        pins=pins,
-                        specifications=specifications,
-                        pdg_schedule=pdg_schedule,
-                        tag=f"iter{iteration}_{p_tag}"
-                    )
 
-                logger.info(f"Iteration {iteration}: Launching Harness² Contrastive Propose–Probe–Compose cycle...")
-                winning_res, winning_eval, composed_tree, decision_notes = self.harness2_architect.execute_contrastive_iteration(
-                    ic_info=ic_info,
-                    pins=pins,
-                    specifications=specifications,
-                    pdg_schedule={k: v * 1e-6 for k, v in pdg_schedule.items()},
-                    base_eval=best_eval,
-                    eval_probe_fn=eval_probe,
-                    measurement_plan=self.spec_plan,
-                    user_prompt=user_prompt,
-                    iteration_index=iteration
-                )
-                active_harness_tree = composed_tree
-                synth_res = winning_res
-                logger.info(f"Iteration {iteration} Composer Decision: {decision_notes}")
-
-            raw_netlist = synth_res.get("spice_netlist", "")
-            subckt_name = synth_res.get("subcircuit_name", subckt_name)
-
-            # 3.2 Validate and clean netlist
-            val_res = self.netlist_validator.validate(
-                netlist=raw_netlist,
-                expected_subckt_name=subckt_name,
-                expected_pins=pins
-            )
-
-            cleaned_netlist = val_res["cleaned_netlist"]
-            netlist_filename = f"{subckt_name}_iter{iteration}.cir"
-            netlist_path = os.path.join(self.output_dir, netlist_filename)
-            with open(netlist_path, "w", encoding="utf-8") as f:
-                f.write(cleaned_netlist)
-            with open(netlist_path[:-4] + ".raw.cir", "w", encoding="utf-8") as f:   # untouched LLM output
-                f.write(raw_netlist)
-
-            final_netlist_path = netlist_path
-            self.tracer.end_span(outputs={
-                "netlist_path": netlist_path,
-                "subcircuit_name": subckt_name,
-                "netlist_line_count": len(cleaned_netlist.splitlines())
-            })
-
-            # 4. Phase 4 & 5: Unified Verification (Deterministic Fixtures + LLM Dynamic Testbench with Math Post-Processing)
-            self.tracer.start_span(4, f"Phase 4: Unified Verification (Loop {iteration})", inputs={
-                "netlist": netlist_filename
-            })
-            if progress_callback:
-                progress_callback(4, f"Phase 4: Unified Verification (Loop {iteration})", "Executing deterministic fixtures and dynamic Fourier/math post-processing...")
-
-            eval_res = self._evaluate_netlist_unified(
-                netlist_code=cleaned_netlist,
-                subckt_name=subckt_name,
+            hermes_flow_res = self.hermes_runner.run_design_flow(
+                ic_info=ic_info,
                 pins=pins,
                 specifications=specifications,
                 pdg_schedule=pdg_schedule,
-                tag=f"iter{iteration}"
+                measurement_plan=self.spec_plan,
+                user_prompt=user_prompt,
+                verify_fn=eval_probe,
+                progress_callback=progress_callback,
+                base_harness_tree=active_harness_tree
             )
 
-            self.tracer.end_span(outputs={
-                "pass_rate_percent": eval_res["pass_rate_percent"],
-                "passed_specs": eval_res["passed_specs"],
-                "failed_specs": eval_res["failed_specs"]
-            })
+            final_netlist_path = hermes_flow_res.get("final_cir_path")
+            best_netlist_path = final_netlist_path
+            best_netlist_code = hermes_flow_res.get("best_netlist", "")
 
-
-            final_evaluation = eval_res
-            pass_rate = eval_res["pass_rate_percent"]
-
-            # Keep the best design seen so far (highest #passed, then coverage, then fewest failures)
-            score = (eval_res.get("passed_specs", 0), eval_res.get("coverage_pct", 0.0), -eval_res.get("failed_specs", 0))
-            if best_score is None or score > best_score:
-                best_score, best_eval, best_netlist_path = score, eval_res, netlist_path
-            self.tracer.end_span(outputs={
-                "pass_rate_percent": pass_rate,
-                "passed_specs": eval_res["passed_specs"],
-                "failed_specs": eval_res["failed_specs"],
-                "unmeasured_specs": eval_res["unmeasured_specs"],
-                "simulation_errors": eval_res.get("simulation_errors", [])[:2]
-            })
-
-            self.tracer.start_span(6, f"Phase 6: Closed-Loop Diagnostics (Loop {iteration})", inputs={
-                "pass_rate_percent": pass_rate
-            })
-            if progress_callback:
-                progress_callback(6, f"Phase 6: Closed-Loop Diagnostics (Loop {iteration})", f"Pass Rate: {pass_rate:.1f}% ({eval_res['passed_specs']}/{eval_res['total_specs']}). Analyzing shortfalls...")
-            logger.info(f"Iteration {iteration} Evaluation Result: Pass Rate = {pass_rate:.1f}% "
-                        f"({eval_res['passed_specs']}/{eval_res['total_specs']} measured testable specs)")
-
-            # Analyze shortfalls in this iteration
-            shortfalls = []
-            if eval_res.get("simulation_errors"):
-                shortfalls.extend([f"Compiler/Simulation Error: {e}" for e in eval_res["simulation_errors"][:4]])
-            failed_evals = [e for e in eval_res.get("spec_evaluations", []) if not e.get("passed")]
-            for fe in failed_evals[:6]:
-                sym = fe.get("symbol")
-                meas = fe.get("measured")
-                diag = fe.get("diagnostic", "Out of bounds")
-                meas_str = f"{meas:.4g}" if meas is not None else "Unobserved"
-                shortfalls.append(f"Param '{sym}' violated: {diag} (Measured: {meas_str})")
-
-            # Analyze improvements made in this iteration
-            improvements = []
-            if iteration > 1 and len(design_iterations) > 0:
-                prev_it = design_iterations[-1]
-                delta_pass = pass_rate - prev_it["pass_rate_percent"]
-                if delta_pass > 0:
-                    improvements.append(f"Pass rate improved by +{delta_pass:.1f}% ({prev_it['passed_specs']} -> {eval_res['passed_specs']} specs passed).")
-                    try:
-                        cue = f"Unsatisfied specs on {part_name}: {[e['symbol'] for e in eval_res.get('spec_evaluations', []) if not e.get('passed')][:4]}"
-                        lesson = synth_res.get("architecture_summary", "Evolved circuit topology and parameter sizing.")
-                        evidence = f"Pass rate improved from {prev_it['pass_rate_percent']:.1f}% to {pass_rate:.1f}%."
-                        self.harness2_architect.library.record_experience(
-                            task_id=part_name,
-                            category=dut_category,
-                            cue=cue,
-                            lesson=lesson,
-                            evidence=evidence,
-                            tree=active_harness_tree,
-                            score_before=prev_it["pass_rate_percent"],
-                            score_after=pass_rate
-                        )
-                    except Exception as le:
-                        logger.warning(f"Could not record experience to library: {le}")
-                if prev_it.get("simulation_errors") and not eval_res.get("simulation_errors"):
-                    improvements.append("Resolved prior SPICE compiler / syntax errors completely.")
-                prev_passed = set(prev_it.get("passed_symbols", []))
-                curr_passed = set([e["symbol"] for e in eval_res.get("spec_evaluations", []) if e.get("passed")])
-                newly_passed = curr_passed - prev_passed
-                if newly_passed:
-                    improvements.append(f"Newly satisfied specs: {', '.join(list(newly_passed)[:5])}.")
-                if synth_res.get("architecture_summary"):
-                    improvements.append(f"Topology refinement: {synth_res['architecture_summary'][:140]}...")
+            if best_netlist_code:
+                final_evaluation = self._evaluate_netlist_unified(
+                    netlist_code=best_netlist_code,
+                    subckt_name=subckt_name,
+                    pins=pins,
+                    specifications=specifications,
+                    pdg_schedule=pdg_schedule,
+                    tag="final_hermes_eval"
+                )
             else:
-                improvements.append("Initial first-principles topology and Level-1 parameter sizing synthesized from scratch.")
+                final_evaluation = {
+                    "pass_rate_percent": 0.0,
+                    "passed_specs": 0,
+                    "failed_specs": len(specifications),
+                    "total_specs": len(specifications),
+                    "coverage_pct": 0.0,
+                    "all_passed": False,
+                    "spec_evaluations": [],
+                    "simulation_errors": ["No netlist generated by Hermes agent"]
+                }
 
-            passed_syms = [e["symbol"] for e in eval_res.get("spec_evaluations", []) if e.get("passed")]
+            pass_rate = final_evaluation.get("pass_rate_percent", 0.0)
 
-            design_iterations.append({
-                "iteration": iteration,
-                "netlist_path": netlist_path,
-                "pass_rate_percent": pass_rate,
-                "coverage_pct": eval_res.get("coverage_pct"),
-                "passed_specs": eval_res["passed_specs"],
-                "failed_specs": eval_res["failed_specs"],
-                "unmeasured_specs": eval_res["unmeasured_specs"],
-                "passed_symbols": passed_syms,
-                "simulation_errors": eval_res.get("simulation_errors", []),
-                "shortfalls": shortfalls,
-                "improvements": improvements,
-                "architecture_summary": synth_res.get("architecture_summary", ""),
-                "design_rationale": synth_res.get("design_rationale", {})
-            })
+            for t_item in hermes_flow_res.get("trajectory", []):
+                t_idx = t_item.get("turn", 1)
+                design_iterations.append({
+                    "iteration": t_idx,
+                    "netlist_path": final_netlist_path or "",
+                    "pass_rate_percent": t_item.get("pass_rate", pass_rate),
+                    "coverage_pct": final_evaluation.get("coverage_pct"),
+                    "passed_specs": final_evaluation.get("passed_specs", 0),
+                    "failed_specs": final_evaluation.get("failed_specs", 0),
+                    "unmeasured_specs": final_evaluation.get("unmeasured_specs", 0),
+                    "passed_symbols": [e.get("symbol") for e in final_evaluation.get("spec_evaluations", []) if e.get("passed")],
+                    "simulation_errors": final_evaluation.get("simulation_errors", []),
+                    "shortfalls": [],
+                    "improvements": [f"Hermes Agent Turn {t_idx}: Executed tools {t_item.get('tools_called')}"],
+                    "architecture_summary": f"Hermes Autonomous Synthesis (Workspace: {hermes_flow_res.get('workspace_dir')})",
+                    "design_rationale": {"hermes_turn": t_item}
+                })
 
             self.tracer.end_span(outputs={
-                "shortfalls_count": len(shortfalls),
-                "improvements_count": len(improvements)
+                "pass_rate_percent": pass_rate,
+                "passed_specs": final_evaluation.get("passed_specs", 0),
+                "turns_executed": hermes_flow_res.get("turns_executed", 0),
+                "final_netlist_path": final_netlist_path
             })
-
-            # Check convergence
-            if eval_res["all_passed"] or pass_rate >= 100.0:
-                logger.info("SUCCESS: 100% of datasheet specifications satisfied!")
-                break
-
-            # If not converged, feed diagnostics into next iteration
-            current_feedback = eval_res["diagnostic_feedback"]
-            logger.info(f"Refinement Feedback for next iteration:\n{current_feedback}")
-
+        else:
+            for iteration in range(1, total_loop_budget + 1):
+                if progress_callback:
+                    progress_callback(3, f"Phase 3: Harness² Synthesis (Loop {iteration})", "Synthesizing convergent netlist via recursive Harness² meta-engine...")
+    
+                logger.info(f"--- Iteration {iteration}/{total_loop_budget}: Harness² Netlist Synthesis ---")
+                self.tracer.start_span(3, f"Phase 3: Harness² Netlist Synthesis (Loop {iteration})", inputs={
+                    "iteration": iteration,
+                    "subckt_name": subckt_name,
+                    "user_prompt": user_prompt
+                })
+    
+                # 3.1 Synthesis under Harness² (Iteration 1: Baseline; Iteration > 1: Contrastive Propose-Probe-Compose)
+                if iteration == 1 or best_eval is None:
+                    synth_res = self.harness2_architect.synthesize_candidate(
+                        tree=active_harness_tree,
+                        ic_info=ic_info,
+                        pins=pins,
+                        specifications=specifications,
+                        pdg_schedule={k: v * 1e-6 for k, v in pdg_schedule.items()},
+                        measurement_plan=self.spec_plan,
+                        user_prompt=user_prompt,
+                        prior_feedback=current_feedback
+                    )
+                else:
+                    def eval_probe(p_netlist: str, p_tag: str) -> Dict[str, Any]:
+                        return self._evaluate_netlist_unified(
+                            netlist_code=p_netlist,
+                            subckt_name=subckt_name,
+                            pins=pins,
+                            specifications=specifications,
+                            pdg_schedule=pdg_schedule,
+                            tag=f"iter{iteration}_{p_tag}"
+                        )
+    
+                    logger.info(f"Iteration {iteration}: Launching Harness² Contrastive Propose–Probe–Compose cycle...")
+                    winning_res, winning_eval, composed_tree, decision_notes = self.harness2_architect.execute_contrastive_iteration(
+                        ic_info=ic_info,
+                        pins=pins,
+                        specifications=specifications,
+                        pdg_schedule={k: v * 1e-6 for k, v in pdg_schedule.items()},
+                        base_eval=best_eval,
+                        eval_probe_fn=eval_probe,
+                        measurement_plan=self.spec_plan,
+                        user_prompt=user_prompt,
+                        iteration_index=iteration
+                    )
+                    active_harness_tree = composed_tree
+                    synth_res = winning_res
+                    logger.info(f"Iteration {iteration} Composer Decision: {decision_notes}")
+    
+                raw_netlist = synth_res.get("spice_netlist", "")
+                subckt_name = synth_res.get("subcircuit_name", subckt_name)
+    
+                # 3.2 Validate and clean netlist
+                val_res = self.netlist_validator.validate(
+                    netlist=raw_netlist,
+                    expected_subckt_name=subckt_name,
+                    expected_pins=pins
+                )
+    
+                cleaned_netlist = val_res["cleaned_netlist"]
+                netlist_filename = f"{subckt_name}_iter{iteration}.cir"
+                netlist_path = os.path.join(self.output_dir, netlist_filename)
+                with open(netlist_path, "w", encoding="utf-8") as f:
+                    f.write(cleaned_netlist)
+                with open(netlist_path[:-4] + ".raw.cir", "w", encoding="utf-8") as f:   # untouched LLM output
+                    f.write(raw_netlist)
+    
+                final_netlist_path = netlist_path
+                self.tracer.end_span(outputs={
+                    "netlist_path": netlist_path,
+                    "subcircuit_name": subckt_name,
+                    "netlist_line_count": len(cleaned_netlist.splitlines())
+                })
+    
+                # 4. Phase 4 & 5: Unified Verification (Deterministic Fixtures + LLM Dynamic Testbench with Math Post-Processing)
+                self.tracer.start_span(4, f"Phase 4: Unified Verification (Loop {iteration})", inputs={
+                    "netlist": netlist_filename
+                })
+                if progress_callback:
+                    progress_callback(4, f"Phase 4: Unified Verification (Loop {iteration})", "Executing deterministic fixtures and dynamic Fourier/math post-processing...")
+    
+                eval_res = self._evaluate_netlist_unified(
+                    netlist_code=cleaned_netlist,
+                    subckt_name=subckt_name,
+                    pins=pins,
+                    specifications=specifications,
+                    pdg_schedule=pdg_schedule,
+                    tag=f"iter{iteration}"
+                )
+    
+                self.tracer.end_span(outputs={
+                    "pass_rate_percent": eval_res["pass_rate_percent"],
+                    "passed_specs": eval_res["passed_specs"],
+                    "failed_specs": eval_res["failed_specs"]
+                })
+    
+    
+                final_evaluation = eval_res
+                pass_rate = eval_res["pass_rate_percent"]
+    
+                # Keep the best design seen so far (highest #passed, then coverage, then fewest failures)
+                score = (eval_res.get("passed_specs", 0), eval_res.get("coverage_pct", 0.0), -eval_res.get("failed_specs", 0))
+                if best_score is None or score > best_score:
+                    best_score, best_eval, best_netlist_path = score, eval_res, netlist_path
+                self.tracer.end_span(outputs={
+                    "pass_rate_percent": pass_rate,
+                    "passed_specs": eval_res["passed_specs"],
+                    "failed_specs": eval_res["failed_specs"],
+                    "unmeasured_specs": eval_res["unmeasured_specs"],
+                    "simulation_errors": eval_res.get("simulation_errors", [])[:2]
+                })
+    
+                self.tracer.start_span(6, f"Phase 6: Closed-Loop Diagnostics (Loop {iteration})", inputs={
+                    "pass_rate_percent": pass_rate
+                })
+                if progress_callback:
+                    progress_callback(6, f"Phase 6: Closed-Loop Diagnostics (Loop {iteration})", f"Pass Rate: {pass_rate:.1f}% ({eval_res['passed_specs']}/{eval_res['total_specs']}). Analyzing shortfalls...")
+                logger.info(f"Iteration {iteration} Evaluation Result: Pass Rate = {pass_rate:.1f}% "
+                            f"({eval_res['passed_specs']}/{eval_res['total_specs']} measured testable specs)")
+    
+                # Analyze shortfalls in this iteration
+                shortfalls = []
+                if eval_res.get("simulation_errors"):
+                    shortfalls.extend([f"Compiler/Simulation Error: {e}" for e in eval_res["simulation_errors"][:4]])
+                failed_evals = [e for e in eval_res.get("spec_evaluations", []) if not e.get("passed")]
+                for fe in failed_evals[:6]:
+                    sym = fe.get("symbol")
+                    meas = fe.get("measured")
+                    diag = fe.get("diagnostic", "Out of bounds")
+                    meas_str = f"{meas:.4g}" if meas is not None else "Unobserved"
+                    shortfalls.append(f"Param '{sym}' violated: {diag} (Measured: {meas_str})")
+    
+                # Analyze improvements made in this iteration
+                improvements = []
+                if iteration > 1 and len(design_iterations) > 0:
+                    prev_it = design_iterations[-1]
+                    delta_pass = pass_rate - prev_it["pass_rate_percent"]
+                    if delta_pass > 0:
+                        improvements.append(f"Pass rate improved by +{delta_pass:.1f}% ({prev_it['passed_specs']} -> {eval_res['passed_specs']} specs passed).")
+                        try:
+                            cue = f"Unsatisfied specs on {part_name}: {[e['symbol'] for e in eval_res.get('spec_evaluations', []) if not e.get('passed')][:4]}"
+                            lesson = synth_res.get("architecture_summary", "Evolved circuit topology and parameter sizing.")
+                            evidence = f"Pass rate improved from {prev_it['pass_rate_percent']:.1f}% to {pass_rate:.1f}%."
+                            self.harness2_architect.library.record_experience(
+                                task_id=part_name,
+                                category=dut_category,
+                                cue=cue,
+                                lesson=lesson,
+                                evidence=evidence,
+                                tree=active_harness_tree,
+                                score_before=prev_it["pass_rate_percent"],
+                                score_after=pass_rate
+                            )
+                        except Exception as le:
+                            logger.warning(f"Could not record experience to library: {le}")
+                    if prev_it.get("simulation_errors") and not eval_res.get("simulation_errors"):
+                        improvements.append("Resolved prior SPICE compiler / syntax errors completely.")
+                    prev_passed = set(prev_it.get("passed_symbols", []))
+                    curr_passed = set([e["symbol"] for e in eval_res.get("spec_evaluations", []) if e.get("passed")])
+                    newly_passed = curr_passed - prev_passed
+                    if newly_passed:
+                        improvements.append(f"Newly satisfied specs: {', '.join(list(newly_passed)[:5])}.")
+                    if synth_res.get("architecture_summary"):
+                        improvements.append(f"Topology refinement: {synth_res['architecture_summary'][:140]}...")
+                else:
+                    improvements.append("Initial first-principles topology and Level-1 parameter sizing synthesized from scratch.")
+    
+                passed_syms = [e["symbol"] for e in eval_res.get("spec_evaluations", []) if e.get("passed")]
+    
+                design_iterations.append({
+                    "iteration": iteration,
+                    "netlist_path": netlist_path,
+                    "pass_rate_percent": pass_rate,
+                    "coverage_pct": eval_res.get("coverage_pct"),
+                    "passed_specs": eval_res["passed_specs"],
+                    "failed_specs": eval_res["failed_specs"],
+                    "unmeasured_specs": eval_res["unmeasured_specs"],
+                    "passed_symbols": passed_syms,
+                    "simulation_errors": eval_res.get("simulation_errors", []),
+                    "shortfalls": shortfalls,
+                    "improvements": improvements,
+                    "architecture_summary": synth_res.get("architecture_summary", ""),
+                    "design_rationale": synth_res.get("design_rationale", {})
+                })
+    
+                self.tracer.end_span(outputs={
+                    "shortfalls_count": len(shortfalls),
+                    "improvements_count": len(improvements)
+                })
+    
+                # Check convergence
+                if eval_res["all_passed"] or pass_rate >= 100.0:
+                    logger.info("SUCCESS: 100% of datasheet specifications satisfied!")
+                    break
+    
+                # If not converged, feed diagnostics into next iteration
+                current_feedback = eval_res["diagnostic_feedback"]
+                logger.info(f"Refinement Feedback for next iteration:\n{current_feedback}")
+    
         # Restore the best netlist found (the loop may end on a worse iteration)
         if best_netlist_path and best_netlist_path != final_netlist_path:
             best_copy = os.path.join(self.output_dir, f"{subckt_name}_BEST.cir")

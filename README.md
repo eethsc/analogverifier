@@ -2,6 +2,7 @@
 
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
 [![Architecture: Dual-Harness²](https://img.shields.io/badge/Architecture-Dual--Harness%C2%B2-purple.svg)](#-시스템-아키텍처-dual-harness²-공진화-구조)
+[![Agent: Hermes x Harness²](https://img.shields.io/badge/Agent-Hermes%20%C3%97%20Harness%C2%B2-orange.svg)](#-hermes-agent--harness²-자율-합성-아키텍처)
 [![Verification: PDG Staged Causal Gate](https://img.shields.io/badge/Verifier-PDG%20Staged%20Causal%20Gate-critical.svg)](#-pdg-기반-4단계-인과-검증-파이프라인-pdg-staged-causal-verification)
 [![Policy: Pure Transistor Analog](https://img.shields.io/badge/SPICE-Pure%20Transistor%20Level%20Only-success.svg)](#-순수-물리-아날로그-강제-정책-zero-behavioral-policy)
 
@@ -9,13 +10,13 @@
 
 ---
 
-## 📌 한눈에 보는 현재 요약 (2026-10-28 기준)
+## 📌 한눈에 보는 현재 요약 (2026-10-29 기준)
 
 | 파이프라인 단계 | 핵심 모듈 | 현재 상태 | 실측 성과 및 검증 근거 |
 |---|---|---|---|
 | **Phase 1 — PDF → HKG 추출 (ParseBench 기반)** | [`pdf_parser.py`](ai_analog_designer/pdf_to_graph/pdf_parser.py), [`hardware_kg_builder.py`](ai_analog_designer/pdf_to_graph/hardware_kg_builder.py) | ✅ **검증 완료** | 8개 표준 IC Ground-Truth 대조 평균 **95.2 / 100** (`gpt-6-luna`), **94.0 / 100** (`nemotron-3-ultra-550b`) |
 | **Phase 2 — HKG → PDG & $\sigma(p)$** | [`pdg_extractor.py`](ai_analog_designer/pdf_to_graph/pdg_extractor.py), [`pdg_fidelity_verifier.py`](ai_analog_designer/pdf_to_graph/pdg_fidelity_verifier.py) | ✅ **검증 완료** | 인과 의존성 Recall **0.86–1.00**, 전원 시퀀싱 순서 일관성 **1.00**, 무라벨 출처 감사(Provenance Audit) 내장 |
-| **Phase 3 — 순수 물리 회로 합성 & 문법 정화** | [`harness2_architect.py`](ai_analog_designer/circuit_synthesis/harness2/harness2_architect.py), [`netlist_validator.py`](ai_analog_designer/circuit_synthesis/netlist_validator.py) | ✅ **결함 교정 완료** | 마크다운 주석 오염(`-` $\to$ `*`) 자동 정화, 중복 `.model` 호이스팅 제거, 미사용 더미 모델 주입 제거 |
+| **Phase 3 — Hermes × Harness² 자율 회로 합성** | [`hermes_agent.py`](ai_analog_designer/hermes_core/hermes_agent.py), [`harness_hermes_tuner.py`](ai_analog_designer/hermes_core/harness_hermes_tuner.py), [`netlist_validator.py`](ai_analog_designer/circuit_synthesis/netlist_validator.py) | ✅ **통합 완료** | **NousResearch Hermes Agent 아키텍처** 래핑 + **Harness²($C_1\sim C_8$) 거버넌스**: 서브서킷 블루프린트 스킬(`skills/analog_blueprints/`) 및 수렴 함정 장기 메모리(`MEMORY.md`) 자율 관리 |
 | **Phase 4 — PDG 4단계 인과 물리 검증** | [`deterministic_testbench.py`](ai_analog_designer/neuro_symbolic_verifier/deterministic_testbench.py), [`verification_flow.py`](ai_analog_designer/neuro_symbolic_verifier/verification_flow.py) | ✅ **PDG 게이트 강제 완료** | **Stage 0(토폴로지/연결성) $\to$ Stage 1(전원/DC 바이어스) $\to$ Stage 2(DC 신호 전달) $\to$ Stage 3(개별 스펙)** 순차 게이트 및 **고유 지표(Unique Kind) 통과율** 도입 |
 | **Phase 5 — Dual-Harness² 공진화** | [`dual_harness2_coordinator.py`](ai_analog_designer/neuro_symbolic_verifier/harness2_verifier/dual_harness2_coordinator.py), [`golden_oracle_anchor.py`](ai_analog_designer/neuro_symbolic_verifier/harness2_verifier/golden_oracle_anchor.py) | ✅ **구현·검증 완료** | 합성 하네스($C_1\sim C_8$)와 검증 하네스($V_1\sim V_3$) 구조화 + 제조사 Golden 모델 100% 통과 게이트키퍼 |
 | **인터랙티브 Web Studio** | [`studio_server.py`](ai_analog_designer/web_studio/studio_server.py), [`run_studio.py`](run_studio.py) | ✅ **E2E 테스트 통과** | 실시간 PDG 시각화, 시퀀싱 타임라인, Dual-Harness² 실시간 합성 및 HKG 캐시 연동 (Playwright 검증) |
@@ -106,6 +107,50 @@ flowchart LR
 > 💡 **Golden Oracle Gatekeeper ([`golden_oracle_anchor.py`](ai_analog_designer/neuro_symbolic_verifier/harness2_verifier/golden_oracle_anchor.py))**:
 > LLM이 검증기($V_1\sim V_3$)에 새로운 규칙을 제안할 때 기준을 낮춰 불량 회로를 통과시키는 환각을 막기 위해, 제조사 공인 매크로모델(TI LM393, LM358, NE555, TL431)을 **100% 통과**할 때만 [`VERIFIER_EXPERIENCE.json`](harness2_library/verifier_experience/VERIFIER_EXPERIENCE.json)에 병합합니다.
 
+### 3. Hermes Agent × Harness² 자율 회로 합성 엔진 ([`ai_analog_designer/hermes_core/`](ai_analog_designer/hermes_core/))
+
+본 시스템은 에이전트 워크플로우를 독자적으로 하드코딩하지 않고, **NousResearch의 오픈소스 자율 에이전트 프레임워크인 Hermes Agent** 아키텍처를 래핑한 뒤 **Harness²($C_1\sim C_8$) 메타 거버너를 통해 이 Hermes를 정밀하게 다듬는 방식**으로 작동합니다:
+
+```mermaid
+flowchart LR
+    subgraph Harness["🏗️ Harness² Meta-Governor"]
+        C1["C1: 페르소나 & 물리 법칙"]
+        C2["C2: 엄격한 물리 SPICE 가드레일"]
+        C3["C3: 수렴 함정 & 회로 결함 메모리"]
+        C4["C4: PDG 정착 도구 가이드"]
+        C5["C5: 서브서킷 블루프린트 스킬"]
+    end
+
+    subgraph Tuner["🔧 HarnessHermesTuner"]
+        Bridge["정방향 튜닝 & 역방향 동기화"]
+    end
+
+    subgraph Hermes["🤖 Hermes Autonomous Agent"]
+        Soul["📜 SOUL.md"]
+        Mem["🧠 memories/MEMORY.md"]
+        Skills["📁 skills/analog_blueprints/"]
+        Loop["🔄 Multi-Turn Loop<br/>(Reason ➔ Tool Call ➔ Reflect)"]
+    end
+
+    subgraph Tools["🛠️ Hermes Tools"]
+        T_bp["retrieve_subcircuit_blueprint"]
+        T_val["validate_netlist_syntax"]
+        T_sim["verify_circuit_pdg_gate"]
+        T_mem["manage_memory"]
+        T_save["save_subcircuit_blueprint"]
+    end
+
+    Harness ==> Bridge ==> Soul & Mem & Skills
+    Soul & Mem & Skills --> Loop
+    Loop <==> Tools
+    Tools -.->|"신규 블루프린트/메모리 환류"| Bridge
+    Bridge -.->|"영구 라이브러리 갱신"| Harness
+```
+
+- **블루프린트 스킬 관리 (`skills/analog_blueprints/`)**: $C_5$에 보관되는 검증된 아날로그 토폴로지(차동 입력단, 능동 미러, 밀러 보상 2단 등)를 Hermes 네이티브 스킬(`SKILL.md`)로 관리하여, 에이전트가 필요 시 `retrieve_subcircuit_blueprint` 도구로 즉시 인출해 활용합니다.
+- **수렴 실패 함정 장기 메모리 (`memories/MEMORY.md`)**: 과거 $500\text{ }\Omega$ 미러 병렬 단락 사고나 부유 노드 발진 등의 결함 방지 레시피를 `MEMORY.md`에 주입하고, 에이전트가 시뮬레이션 실패 분석 중 새로운 회로 함정을 발견하면 `manage_memory` 도구로 동적 기록(`add`/`patch`)합니다.
+- **자율 도구 디스패치 & 양방향 동기화**: Hermes가 `verify_circuit_pdg_gate`를 통해 100% 스펙 달성을 입증하면, `save_subcircuit_blueprint`로 신규 골든 블루프린트를 스킬 저장소에 등록하고 `HarnessLibrary`로 자동 동기화합니다.
+
 ---
 
 ## 📄 데이터시트 파싱 (ParseBench 기반 Phase 1 & 2) 및 검증기 캘리브레이션
@@ -149,6 +194,11 @@ flowchart LR
 analogverifier/
 ├── ai_analog_designer/                  # 핵심 자율 설계 프레임워크 패키지
 │   ├── autonomous_design_agent.py       # 5-Phase 전체 파이프라인 및 Dual-Harness² 총괄 오케스트레이터
+│   ├── hermes_core/                     # [Phase 3] Harness² 거버넌스 기반 Hermes 자율 에이전트 코어
+│   │   ├── hermes_agent.py              # Hermes 멀티턴 추론·도구 디스패치 루프 (SOUL.md & MEMORY.md)
+│   │   ├── hermes_tools.py              # PDG 게이트 시뮬레이션, 문법 가드레일, 블루프린트 스킬/메모리 도구
+│   │   ├── harness_hermes_tuner.py      # Harness²(C1~C8) ➔ Hermes 워크스페이스 튜닝 & 양방향 동기화
+│   │   └── hermes_workflow.py           # Hermes 폐루프 자율 합성 워크플로우 러너
 │   ├── llm_client.py                    # Provider 공용 LLM 클라이언트 (NVIDIA NIM / OpenRouter)
 │   ├── pdf_to_graph/                    # [Phase 1 & 2] ParseBench 기반 데이터시트 파싱 및 PDG 추출
 │   ├── circuit_synthesis/               # [Phase 3] 순수 물리 아날로그 회로 합성 및 문법/모델 정화기
@@ -165,6 +215,8 @@ analogverifier/
 ├── harness2_library/                    # 소자군별 영구 진화 지식 베이스 (교정된 블루프린트 포함)
 ├── benchmarks/pdg_groundtruth/          # 8개 표준 IC 수작업 Ground-Truth 라벨 데이터셋
 └── tests/                               # 단위 테스트 및 Playwright 브라우저 E2E 테스트
+    ├── test_hermes_harness2_integration.py  # Hermes 에이전트 및 Harness² 튜너 통합 단위 테스트 (6/6 통과)
+    └── test_dual_harness2_and_analog_rules.py # 물리 아날로그 가드레일 단위 테스트
 ```
 
 ---
