@@ -49,9 +49,9 @@ class PortDependencyGraphExtractor:
         for p in params:
             if not isinstance(p, dict) or str(p.get("category", "ELECTRICAL")).upper() != "ELECTRICAL":
                 continue
-            sym = (p.get("symbol") or "").lower()
-            name = (p.get("name") or "").lower()
-            unit = p.get("unit") or ""
+            sym = str(p.get("symbol") or "").lower()
+            name = str(p.get("name") or "").lower()
+            unit = str(p.get("unit") or "")
             val = next((p.get(k) for k in ("typ", "max", "min") if isinstance(p.get(k), (int, float))), None)
             if val is None:
                 continue
