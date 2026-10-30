@@ -159,18 +159,18 @@ Available Tools:
 {tools_schema_json}
 
 === AGENT EXECUTION POLICY ===
-1. FIRST, if appropriate, call `retrieve_subcircuit_blueprint` to check for relevant proven circuit topologies.
-2. SYNTHESIZE your candidate SPICE netlist. Before final evaluation, you may call `validate_netlist_syntax` to verify pin order and physical guardrails.
+1. FIRST, call `retrieve_subcircuit_blueprint` (or `search_web_circuit_reference` via Tavily + Exa) to check for relevant proven circuit topologies and transistor-level reference designs.
+2. SYNTHESIZE your candidate SPICE netlist using ONLY explicit transistor/passive primitives (Q, M, R, C, D, I, V) and explicit `.model` cards. NEVER use undefined `X...` placeholder subcircuit calls.
 3. EXECUTE simulation via `verify_circuit_pdg_gate`. Inspect the 4-stage causal gate feedback carefully:
    - Stage 0 failure: Signal path disconnected or illegal behavioral elements.
    - Stage 1 failure: DC bias current out of range (short circuit or cutoff).
    - Stage 2 failure: DC transfer gain/switching failed (e.g. parallel mirror resistor trap).
    - Stage 3 failure: Specific parametric spec failed (slew rate, VOL, PSRR).
-4. IF a failure reveals a new design trap, invoke `manage_memory` with action="add" to record the trap in MEMORY.md.
+4. IF a failure reveals a new design trap or you need external circuit topology equations, invoke `search_web_circuit_reference` or `manage_memory` with action="add" to record the trap in MEMORY.md.
 5. REVISE and re-verify until 100% pass rate is achieved.
 6. ONCE fully verified, call `save_subcircuit_blueprint` to record your winning topology into skills/!
 7. When you are done or providing your final candidate, output the FULL complete SPICE subcircuit.
-CRITICAL: NEVER use ellipses, placeholders, or summaries in the netlist. Every single transistor (Q/M), resistor (R), capacitor (C), and `.model` card must be explicitly written out:
+CRITICAL: NEVER use ellipses, placeholders, or undefined X-subcircuit stubs in the netlist. Every single transistor (Q/M), resistor (R), capacitor (C), and `.model` card must be explicitly written out:
 <architecture_summary>
 [Explain your chosen topology, biasing choices, and sizing rationale]
 </architecture_summary>
@@ -208,14 +208,16 @@ CRITICAL: NEVER use ellipses, placeholders, or summaries in the netlist. Every s
         return calls
 
     def _is_meaningful_netlist(self, netlist: str) -> bool:
-        """Checks that netlist is not an empty stub with just ellipses or comments."""
+        """Checks that netlist is not an empty stub with just ellipses, comments, or undefined X-placeholders."""
         if not netlist or ".subckt" not in netlist.lower() or ".ends" not in netlist.lower():
             return False
         # Reject literal placeholder netlists
         if re.search(r'\.\.\.', netlist) and len(netlist.strip().splitlines()) <= 5:
             return False
+        if re.search(r'\([^\r\n]*placeholder[^\r\n]*\)', netlist, re.I):
+            return False
         lines = [ln.strip() for ln in netlist.splitlines()]
-        elem_lines = [ln for ln in lines if ln and ln[0].upper() in "RCLQMDJVIX" and not ln.startswith(".")]
+        elem_lines = [ln for ln in lines if ln and ln[0].upper() in "RCLQMDJVI" and not ln.startswith(".")]
         return len(elem_lines) >= 3
 
     def extract_netlist(self, text: str) -> Optional[str]:
@@ -326,11 +328,11 @@ CRITICAL: NEVER use ellipses, placeholders, or summaries in the netlist. Every s
             guidance = []
             pins_line = " ".join([p.get("name", str(p)) if isinstance(p, dict) else str(p) for p in self.tools.pins]) if hasattr(self.tools, "pins") and self.tools.pins else "INP INM OUT VCC GND"
 
-            if any(o['tool'] == 'retrieve_subcircuit_blueprint' for o in tool_outputs):
+            if any(o['tool'] in ('retrieve_subcircuit_blueprint', 'search_web_circuit_reference') for o in tool_outputs):
                 guidance.append(
-                    f"Blueprint retrieved. Synthesize your complete transistor-level SPICE netlist for '{self.tools.dut_name}'. "
+                    f"Reference & blueprint data retrieved. Synthesize your complete transistor-level SPICE netlist for '{self.tools.dut_name}'. "
                     f"Header signature: .subckt {self.tools.dut_name} {pins_line}. "
-                    f"Write out every transistor, bias component, and .model card. Verify using `verify_circuit_pdg_gate`."
+                    f"Write out every transistor (Q/M), passive component (R/C), and .model card without any X-placeholders. Verify using `verify_circuit_pdg_gate`."
                 )
             if any(o['tool'] in ('validate_netlist_syntax', 'verify_circuit_pdg_gate', 'auto_eval_physical_gate') for o in tool_outputs):
                 if turn_result.pass_rate < 100.0:

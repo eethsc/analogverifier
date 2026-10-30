@@ -130,6 +130,23 @@ The subcircuit must operate with its negative supply pin tied to 0 V (single sup
 
         user_prompt_section = f"\n## USER DIRECTIVES:\n{user_prompt}\n" if user_prompt else ""
 
+        # 4b. Pre-fetch Web Circuit References via Tavily + Exa
+        web_ref_section = ""
+        try:
+            web_res = tools.search_web_circuit_reference(
+                query=f"{part_name} {category} internal schematic transistor circuit SPICE topology",
+                ic_name=part_name,
+                category=category
+            )
+            if web_res and web_res.get("formatted_markdown"):
+                web_ref_section = f"\n## WEB CIRCUIT DESIGN REFERENCES (Tavily & Exa):\n{web_res['formatted_markdown']}\n"
+                logger.info(
+                    f"Retrieved {web_res.get('references_count', 0)} web circuit references "
+                    f"(Tavily={web_res.get('tavily_ok')}, Exa={web_res.get('exa_ok')}) for {part_name}"
+                )
+        except Exception as e:
+            logger.warning(f"Pre-synthesis web reference fetch skipped: {e}")
+
         task_prompt = f"""Synthesize a production-ready, pure transistor-level SPICE netlist for {part_name}.
 
 ## TARGET IC METADATA:
@@ -146,11 +163,12 @@ The subcircuit must operate with its negative supply pin tied to 0 V (single sup
 ## PORT DEPENDENCY SCHEDULE (Settling time sequence):
 {schedule_summary}
 {measurement_section}
+{web_ref_section}
 {user_prompt_section}
 
 ### AGENT INSTRUCTIONS:
-1. First, search available subcircuit blueprint skills using `retrieve_subcircuit_blueprint` to find the proven topology for this IC family.
-2. Formulate your schematic sizing (bias currents, differential pair, active load, gain stage, output buffer).
+1. First, search available subcircuit blueprint skills using `retrieve_subcircuit_blueprint` (and `search_web_circuit_reference` if additional topology details are needed) to find the proven topology for this IC family.
+2. Formulate your schematic sizing (bias currents, differential pair, active load, gain stage, output buffer) using ONLY real SPICE primitives (`Q`, `M`, `R`, `C`, `D`, `I`, `V`) and explicit `.model` cards. NEVER write undefined `X...` placeholder subcircuit calls.
 3. Validate your SPICE syntax and guardrails using `validate_netlist_syntax`.
 4. Run LTspice physical simulation via `verify_circuit_pdg_gate`.
 5. Examine any failed specifications or stage cutoffs. If a design trap or convergence issue occurs, record it in memory using `manage_memory`.

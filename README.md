@@ -3,6 +3,7 @@
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
 [![Architecture: Dual-Harness²](https://img.shields.io/badge/Architecture-Dual--Harness%C2%B2-purple.svg)](#-시스템-아키텍처-dual-harness²-공진화-구조)
 [![Agent: Hermes x Harness²](https://img.shields.io/badge/Agent-Hermes%20%C3%97%20Harness%C2%B2-orange.svg)](#-hermes-agent--harness²-자율-합성-아키텍처)
+[![Web Search: Tavily + Exa](https://img.shields.io/badge/Web%20Search-Tavily%20%2B%20Exa-00b4d8.svg)](#-tavily--exa-이중-웹-회로-레퍼런스-검색-엔진-web-circuit-reference-search)
 [![Verification: PDG Staged Causal Gate](https://img.shields.io/badge/Verifier-PDG%20Staged%20Causal%20Gate-critical.svg)](#-pdg-기반-4단계-인과-검증-파이프라인-pdg-staged-causal-verification)
 [![Policy: Pure Transistor Analog](https://img.shields.io/badge/SPICE-Pure%20Transistor%20Level%20Only-success.svg)](#-순수-물리-아날로그-강제-정책-zero-behavioral-policy)
 
@@ -134,6 +135,7 @@ flowchart LR
 
     subgraph Tools["🛠️ Hermes Tools"]
         T_bp["retrieve_subcircuit_blueprint"]
+        T_web["search_web_circuit_reference<br/>(Tavily + Exa)"]
         T_val["validate_netlist_syntax"]
         T_sim["verify_circuit_pdg_gate"]
         T_mem["manage_memory"]
@@ -143,13 +145,28 @@ flowchart LR
     Harness ==> Bridge ==> Soul & Mem & Skills
     Soul & Mem & Skills --> Loop
     Loop <==> Tools
-    Tools -.->|"신규 블루프린트/메모리 환류"| Bridge
+    Tools -.->|"신규 블루프린트/웹 레퍼런스/메모리 환류"| Bridge
     Bridge -.->|"영구 라이브러리 갱신"| Harness
 ```
 
-- **블루프린트 스킬 관리 (`skills/analog_blueprints/`)**: $C_5$에 보관되는 검증된 아날로그 토폴로지(차동 입력단, 능동 미러, 밀러 보상 2단 등)를 Hermes 네이티브 스킬(`SKILL.md`)로 관리하여, 에이전트가 필요 시 `retrieve_subcircuit_blueprint` 도구로 즉시 인출해 활용합니다.
+- **블루프린트 스킬 관리 (`skills/analog_blueprints/`)**: $C_5$에 보관되는 검증된 아날로그 토폴로지(차동 입력단, 능동 미러, 밀러 보상 2단, Class-D BTL H-Bridge 등)를 Hermes 네이티브 스킬(`SKILL.md`)로 관리하여, 에이전트가 필요 시 `retrieve_subcircuit_blueprint` 도구로 즉시 인출해 활용합니다.
 - **수렴 실패 함정 장기 메모리 (`memories/MEMORY.md`)**: 과거 $500\text{ }\Omega$ 미러 병렬 단락 사고나 부유 노드 발진 등의 결함 방지 레시피를 `MEMORY.md`에 주입하고, 에이전트가 시뮬레이션 실패 분석 중 새로운 회로 함정을 발견하면 `manage_memory` 도구로 동적 기록(`add`/`patch`)합니다.
 - **자율 도구 디스패치 & 양방향 동기화**: Hermes가 `verify_circuit_pdg_gate`를 통해 100% 스펙 달성을 입증하면, `save_subcircuit_blueprint`로 신규 골든 블루프린트를 스킬 저장소에 등록하고 `HarnessLibrary`로 자동 동기화합니다.
+
+### 4. 🌐 Tavily + Exa 이중 웹 회로 레퍼런스 검색 엔진 ([`web_reference_search.py`](ai_analog_designer/hermes_core/web_reference_search.py))
+
+로컬 `harness2_library`에 아직 등록되지 않은 신규/고복잡도 IC(예: `TPA3116D2` 스테레오 BTL Class-D 오디오 앰프 등)를 합성하거나 시뮬레이션 스펙 미달이 발생할 때, 에이전트가 정의되지 않은 `X... (placeholder)` 스텁을 생성하는 문제를 해결하기 위해 **Tavily Search API**와 **Exa Neural Search API**를 결합한 이중 웹 회로 레퍼런스 검색 엔진을 통합했습니다:
+
+1. **병렬 이중 검색 아키텍처 (`WebCircuitReferenceSearcher`)**:
+   - **Tavily API**: 대상 IC의 내부 블록 다이어그램, 트랜지스터 단 구성, 바이어스 설계 수식에 대한 기술 요약(`tavily_answer`) 및 웹 문서를 실시간 합성합니다.
+   - **Exa Neural Search API**: 학술 논문, 제조사 애플리케이션 노트, 공개 SPICE 서브서킷(`.subckt`, `.model`) 리포지토리를 시맨틱 검색하여 실제 SPICE 코드 스니펫(`spice_hints`)을 추출합니다.
+2. **워크플로우 3단계 자동 연동**:
+   - **사전 컨텍스트 주입 (Pre-Synthesis Grounding)**: [`hermes_workflow.py`](ai_analog_designer/hermes_core/hermes_workflow.py) 및 [`harness2_architect.py`](ai_analog_designer/circuit_synthesis/harness2/harness2_architect.py)가 회로 합성 시작 전 대상 IC의 웹 회로 레퍼런스를 자동 조회하여 프롬프트에 주입합니다.
+   - **에이전트 자율 도구 (`search_web_circuit_reference` & 블루프린트 폴백)**: 에이전트가 능동적으로 웹 회로 레퍼런스를 검색하거나, `retrieve_subcircuit_blueprint`에서 로컬 매칭이 없을 때 자동으로 Tavily + Exa 검색을 실행하고 결과를 `skills/web_references/`에 영구 캐싱합니다.
+   - **Harness² Propose 단계 보강 (`execute_contrastive_iteration`)**: 1차 시뮬레이션에서 실패한 스펙(`failed_specs`)을 기반으로 Harness²가 개선안을 Propose할 때 관련 회로 설계 레퍼런스를 함께 참조합니다.
+3. **동적 테스트벤치 문법 자동 정화기 (`_sanitize_dynamic_testbench`) 및 플레이스홀더 차단**:
+   - [`dynamic_testbench_harness.py`](ai_analog_designer/neuro_symbolic_verifier/dynamic_testbench_harness.py)에서 LLM이 테스트벤치 생성 시 전원/제어 핀에 `V` 접두사나 접지 노드 `0`을 누락하는 실수(`PVCC PVCC 21` $\to$ `V_PVCC PVCC 0 21`, `GND GND 0` $\to$ `V_GND GND 0 0`) 및 비표준 `.meas ... param ... from=` 구문을 결정론적으로 자동 수리합니다.
+   - [`hermes_agent.py`](ai_analog_designer/hermes_core/hermes_agent.py)의 `_is_meaningful_netlist`가 정의되지 않은 `X... (placeholder)` 서브서킷 스텁을 원천 거부하고 실제 트랜지스터/수동 소자(`Q, M, R, C, D, I, V`)만 채택하도록 강제합니다.
 
 ---
 
@@ -196,7 +213,8 @@ analogverifier/
 │   ├── autonomous_design_agent.py       # 5-Phase 전체 파이프라인 및 Dual-Harness² 총괄 오케스트레이터
 │   ├── hermes_core/                     # [Phase 3] Harness² 거버넌스 기반 Hermes 자율 에이전트 코어
 │   │   ├── hermes_agent.py              # Hermes 멀티턴 추론·도구 디스패치 루프 (SOUL.md & MEMORY.md)
-│   │   ├── hermes_tools.py              # PDG 게이트 시뮬레이션, 문법 가드레일, 블루프린트 스킬/메모리 도구
+│   │   ├── hermes_tools.py              # PDG 게이트 시뮬레이션, 문법 가드레일, 블루프린트 스킬/메모리/웹검색 도구
+│   │   ├── web_reference_search.py      # Tavily + Exa 병렬 웹 회로 설계 레퍼런스 및 SPICE 스니펫 검색기
 │   │   ├── harness_hermes_tuner.py      # Harness²(C1~C8) ➔ Hermes 워크스페이스 튜닝 & 양방향 동기화
 │   │   └── hermes_workflow.py           # Hermes 폐루프 자율 합성 워크플로우 러너
 │   ├── llm_client.py                    # Provider 공용 LLM 클라이언트 (NVIDIA NIM / OpenRouter)
@@ -205,6 +223,7 @@ analogverifier/
 │   ├── neuro_symbolic_verifier/         # [Phase 4 & 5] PDG 4단계 인과 검증기 및 Verifier Harness²
 │   │   ├── spec_planner.py              # 스펙 분류 및 시험 조건 파서 (V1)
 │   │   ├── deterministic_testbench.py   # PDG Stage 0~3 인과 게이트 및 결정론적 LTspice 픽스처 (V2)
+│   │   ├── dynamic_testbench_harness.py # 동적 오디오/과도 테스트벤치 합성기 및 SPICE 문법 자동 수리기
 │   │   ├── units.py                     # 물리 단위 정규화 (V3)
 │   │   └── verification_flow.py         # PDG 게이트 → 단계별 픽스처 → 행/고유지표 이중 평가 플로우
 │   └── web_studio/                      # 실시간 브라우저 UI 서버
@@ -212,10 +231,12 @@ analogverifier/
 │   ├── LM393_FINAL_HARNESS2.cir         # LM393 (16/16 = 100.0% 통과)
 │   ├── TL431_FINAL_HARNESS2.cir         # TL431 (6/6 = 100.0% 통과)
 │   └── LM358_FINAL_HARNESS2.cir         # LM358 (31/31 = 100.0% 통과)
-├── harness2_library/                    # 소자군별 영구 진화 지식 베이스 (교정된 블루프린트 포함)
+├── harness2_library/                    # 소자군별 영구 진화 지식 베이스 (LM393, LM358, TL431, TPA3116D2 등)
 ├── benchmarks/pdg_groundtruth/          # 8개 표준 IC 수작업 Ground-Truth 라벨 데이터셋
-└── tests/                               # 단위 테스트 및 Playwright 브라우저 E2E 테스트
-    ├── test_hermes_harness2_integration.py  # Hermes 에이전트 및 Harness² 튜너 통합 단위 테스트 (6/6 통과)
+└── tests/                               # 단위 테스트 및 엔드투엔드 통합 테스트
+    ├── test_circuit_synthesis_success.py      # Hermes × Harness² 100% 자율 회로 합성 E2E 테스트
+    ├── test_web_reference_and_fixes.py        # Tavily + Exa 웹 검색, 동적 테스트벤치 수리기, 플레이스홀더 차단 테스트
+    ├── test_hermes_harness2_integration.py    # Hermes 에이전트 및 Harness² 튜너 통합 단위 테스트
     └── test_dual_harness2_and_analog_rules.py # 물리 아날로그 가드레일 단위 테스트
 ```
 
@@ -231,6 +252,13 @@ python -m venv .venv
 pip install -r requirements.txt playwright
 ```
 
+- **환경 변수 설정 (`.env`)**:
+  ```ini
+  LLM_PROVIDER=nim
+  NVIDIA_API_KEY="your_nvidia_nim_api_key"
+  TAVILY_API_KEY="your_tavily_api_key"
+  EXA_API_KEY="your_exa_api_key"
+  ```
 - **인터랙티브 Web Studio 실행**:
   ```powershell
   python run_studio.py --port 8080

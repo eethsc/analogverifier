@@ -12,6 +12,7 @@ import logging
 from typing import Dict, Any, List, Optional, Callable
 
 from ai_analog_designer.circuit_synthesis.netlist_validator import NetlistValidator
+from ai_analog_designer.hermes_core.web_reference_search import WebCircuitReferenceSearcher
 
 logger = logging.getLogger("HermesAnalogTools")
 
@@ -50,6 +51,7 @@ class HermesAnalogTools:
         os.makedirs(os.path.dirname(self.memory_file), exist_ok=True)
 
         self.validator = NetlistValidator()
+        self.web_searcher = WebCircuitReferenceSearcher()
         self.evaluation_history: List[Dict[str, Any]] = []
 
     def get_tool_schemas(self) -> List[Dict[str, Any]]:
@@ -177,6 +179,31 @@ class HermesAnalogTools:
                         "required": ["action"]
                     }
                 }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "search_web_circuit_reference",
+                    "description": "Searches the web using Tavily and Exa neural search for real-world analog circuit schematics, SPICE subcircuit netlists (.subckt), transistor-level topologies, and application note design references.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {
+                                "type": "string",
+                                "description": "Search query for circuit topology, SPICE subcircuit model, or internal schematic stages."
+                            },
+                            "ic_name": {
+                                "type": "string",
+                                "description": "Optional target IC part number (defaults to current DUT)."
+                            },
+                            "category": {
+                                "type": "string",
+                                "description": "Optional IC category, e.g. 'audio_amplifier', 'comparator', 'operational_amplifier', 'ldo'."
+                            }
+                        },
+                        "required": ["query"]
+                    }
+                }
             }
         ]
 
@@ -192,6 +219,8 @@ class HermesAnalogTools:
             return self.save_subcircuit_blueprint(**arguments)
         elif tool_name == "manage_memory":
             return self.manage_memory(**arguments)
+        elif tool_name == "search_web_circuit_reference":
+            return self.search_web_circuit_reference(**arguments)
         else:
             return {"error": f"Unknown tool: '{tool_name}'"}
 
@@ -312,12 +341,54 @@ class HermesAnalogTools:
                         except Exception:
                             pass
 
-        return {
+        web_refs: Optional[Dict[str, Any]] = None
+        if len(matches) == 0:
+            try:
+                web_refs = self.search_web_circuit_reference(
+                    query=query,
+                    ic_name=self.dut_name,
+                    category=category or ""
+                )
+            except Exception as e:
+                logger.warning(f"Auto web reference fallback failed: {e}")
+
+        res_dict: Dict[str, Any] = {
             "query": query,
             "category": category,
             "matches_found": len(matches),
             "blueprints": matches[:5]
         }
+        if web_refs:
+            res_dict["web_references"] = web_refs
+        return res_dict
+
+    def search_web_circuit_reference(
+        self,
+        query: str,
+        ic_name: Optional[str] = None,
+        category: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Queries Tavily and Exa for circuit topology references, SPICE netlists, and
+        internal schematic descriptions, and caches the findings in skills/web_references/.
+        """
+        target_ic = (ic_name or self.dut_name).strip()
+        res = self.web_searcher.search_circuit_reference(
+            ic_name=target_ic,
+            category=category or "",
+            extra_query=query
+        )
+        # Persist retrieved web reference into workspace skills for traceability
+        try:
+            web_dir = os.path.join(self.skills_dir, "web_references")
+            os.makedirs(web_dir, exist_ok=True)
+            safe_ic = re.sub(r'[^a-zA-Z0-9_-]', '_', target_ic).lower()
+            ref_path = os.path.join(web_dir, f"{safe_ic}_web_reference.md")
+            with open(ref_path, "w", encoding="utf-8") as f:
+                f.write(res.get("formatted_markdown", ""))
+        except Exception:
+            pass
+        return res
 
     def save_subcircuit_blueprint(
         self,

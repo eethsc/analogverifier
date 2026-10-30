@@ -12,6 +12,7 @@ from typing import Dict, Any, List, Optional, Tuple, Callable
 
 from ai_analog_designer.llm_client import LLMClient
 from ai_analog_designer.circuit_synthesis.netlist_validator import NetlistValidator
+from ai_analog_designer.hermes_core.web_reference_search import WebCircuitReferenceSearcher
 from .harness_tree import HarnessTree
 from .harness_library import HarnessLibrary
 from .harness_proposer import Harness2Proposer
@@ -49,6 +50,7 @@ class Harness2CircuitArchitect:
             synthesizer_provider=synthesizer_provider
         )
         self.validator = NetlistValidator()
+        self.web_searcher = WebCircuitReferenceSearcher()
 
         # Active harness tree (initialized from library bootstrapping)
         self.active_tree = HarnessTree()
@@ -102,6 +104,16 @@ The subcircuit must work with its negative supply pin tied to 0 V (single supply
                 pass
 
         user_prompt_section = f"\n## USER DIRECTIVES:\n{user_prompt}\n" if user_prompt else ""
+        try:
+            web_ref = self.web_searcher.search_circuit_reference(
+                ic_name=part_name,
+                category=ic_info.get("category", "analog_ic")
+            )
+            if web_ref and web_ref.get("formatted_markdown"):
+                user_prompt_section += f"\n## WEB CIRCUIT DESIGN REFERENCES (Tavily & Exa):\n{web_ref['formatted_markdown']}\n"
+        except Exception as e:
+            logger.debug(f"Web reference lookup in synthesize_candidate skipped: {e}")
+
         feedback_section = f"\n## PREVIOUS FEEDBACK & DIAGNOSTICS:\n{prior_feedback}\n" if prior_feedback else ""
 
         # Compile full structured prompt from the harness tree
@@ -185,6 +197,18 @@ The subcircuit must work with its negative supply pin tied to 0 V (single supply
         feedback = base_eval.get("diagnostic_feedback", "")
         failed_specs = [e for e in base_eval.get("spec_evaluations", []) if not e.get("passed")]
         compiler_errors = base_eval.get("simulation_errors", [])
+
+        try:
+            failed_syms = [str(e.get("symbol", "")) for e in failed_specs if e.get("symbol")]
+            web_ref = self.web_searcher.search_circuit_reference(
+                ic_name=part_name,
+                category=ic_info.get("category", "analog_ic"),
+                failed_specs=failed_syms
+            )
+            if web_ref and web_ref.get("formatted_markdown"):
+                feedback = f"{feedback}\n\n{web_ref['formatted_markdown']}".strip()
+        except Exception as e:
+            logger.debug(f"Web reference lookup in execute_contrastive_iteration skipped: {e}")
 
         # 1. Propose
         tree_inv, tree_dom = self.proposer.propose_edits(

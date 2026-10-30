@@ -263,17 +263,18 @@ Synthesize an advanced LTspice testbench to rigorously measure complex performan
    `.include "{netlist_filename}"`
 2. DUT Instantiation:
    `XDUT {pin_names_str} {subckt_name}`
-3. Power & Grounding:
-   - Tie ground pin (GND, PowerPAD) to node 0.
-   - Power supplies (PVCC, AVCC, VDD) set to typical datasheet operating voltages (e.g. 12V or 24V).
+3. Power & Grounding (STRICT SPICE SYNTAX - EVERY voltage source MUST start with 'V' and have 2 nodes):
+   - Tie ground pins to node 0 using 0V sources: `VGND GND 0 0`, `VPAD PowerPAD 0 0`. NEVER write `GND GND 0` or `PowerPAD 0`.
+   - Power supplies MUST start with `V` and reference node `0`: e.g. `VPVCC PVCC 0 21`, `VAVCC AVCC 0 5`. NEVER write `PVCC PVCC 21`.
 4. Audio / Dynamic Signal Stimulus:
    - For THD/THD+N and Output Power:
      Provide 1kHz differential sinusoidal source on audio input pins:
      `VINP INP 0 SINE(0 1.0 1k 29u)`
      `VINN INN 0 SINE(0 -1.0 1k 29u)` (anti-phase for true differential input)
      Or single-ended if non-differential.
-   - For Digital / Enable / Mute:
-     Set SDZ high (e.g. 3.3V or 5V) after t=25u to wake DUT. Set MUTE low (0V).
+   - For Digital / Enable / Mute (MUST use `V` prefix and node `0`):
+     `VSDZ SDZ 0 PULSE(0 3.3 25u 100n 100n 20m 40m)`
+     `VMUTE MUTE 0 0`
 5. Load Termination:
    - For Audio Amplifiers / BTL power stages: Connect standard load resistor between differential output pins:
      `RL OUTPL OUTNL 4` (or 8 Ohm per datasheet conditions).
@@ -315,6 +316,7 @@ Respond with the exact testbench enclosed in:
                 deck = raw_resp.strip()
 
         # Sanitize deck
+        deck = self._sanitize_dynamic_testbench(deck, pins)
         if not re.search(r'\.include\s+["\']?' + re.escape(netlist_filename), deck, re.I):
             deck = f'.include "{netlist_filename}"\n' + deck
         if ".end" not in deck.lower():
@@ -325,6 +327,72 @@ Respond with the exact testbench enclosed in:
             "content": deck,
             "target_specs": target_specs
         }
+
+    @staticmethod
+    def _sanitize_dynamic_testbench(deck: str, pins: List[Dict[str, Any]]) -> str:
+        """
+        Deterministically repairs common LLM SPICE testbench syntax mistakes:
+          - Missing 'V' prefix or node '0' on voltage source declarations (e.g. 'PVCC PVCC 21' -> 'VPVCC PVCC 0 21')
+          - Bare ground pin lines ('GND GND 0', 'PowerPAD 0' -> 'VGND GND 0 0', 'VPAD PowerPAD 0 0')
+          - Invalid '.meas ... param ... from=... to=...' syntax
+        """
+        pin_names = {p.get("name", "").upper(): p.get("name", "") for p in pins if isinstance(p, dict) and p.get("name")}
+        cleaned_lines: List[str] = []
+
+        for raw_ln in deck.splitlines():
+            s = raw_ln.strip()
+            if not s or s.startswith(("*", ";", "+")):
+                cleaned_lines.append(raw_ln)
+                continue
+
+            # Fix invalid .meas ... param ... from=... to=... or V(...) inside param
+            if s.lower().startswith(".meas"):
+                if re.search(r'\bparam\b', s, re.I) and (
+                    re.search(r'\bfrom\s*=', s, re.I) or re.search(r'\bV\s*\(', s, re.I) or re.search(r'Fourier\s*\(', s, re.I)
+                ):
+                    cleaned_lines.append("* [Auto-commented invalid .meas param] " + s)
+                    continue
+                if re.search(r'^.meas\s+\w+\s+\w+\s+(?:rise|fall)=', s, re.I) and "when" not in s.lower() and "trig" not in s.lower():
+                    cleaned_lines.append("* [Auto-commented malformed .meas trigger] " + s)
+                    continue
+                cleaned_lines.append(raw_ln)
+                continue
+
+            if s.startswith("."):
+                cleaned_lines.append(raw_ln)
+                continue
+
+            tokens = s.split()
+            first_up = tokens[0].upper()
+
+            # Case 1: "<PIN> 0" e.g. "PowerPAD 0"
+            if len(tokens) == 2 and first_up in pin_names and tokens[1] == "0":
+                orig_pin = pin_names[first_up]
+                cleaned_lines.append(f"V_{orig_pin} {orig_pin} 0 0")
+                continue
+
+            # Case 2: "<PIN> <PIN> <VAL>" or "<PIN> GND <VAL>" e.g. "PVCC PVCC 21", "GND GND 0", "SDZ SDZ 3.3V", "AM0 AM0 V"
+            if len(tokens) >= 3 and (first_up in pin_names or first_up in ("GND", "POWERPAD", "VDD", "VCC", "PVCC", "AVCC")):
+                if tokens[1].upper() == first_up or tokens[1].upper() in ("GND", "0"):
+                    node = tokens[0]
+                    val_tokens = tokens[2:]
+                    if len(val_tokens) == 1:
+                        v_str = val_tokens[0]
+                        if v_str.upper() == "V":
+                            v_str = "3.3"
+                        elif v_str.upper() in pin_names:
+                            cleaned_lines.append(f"R_TIE_{node} {node} {v_str} 1m")
+                            continue
+                        cleaned_lines.append(f"V_{node} {node} 0 {v_str}")
+                        continue
+                    elif len(val_tokens) >= 3 and any("u" in t.lower() or "m" in t.lower() for t in val_tokens):
+                        # e.g. "SDZ SDZ 0V 25u 3.3V" -> PULSE
+                        cleaned_lines.append(f"V_{node} {node} 0 PULSE(0 3.3 25u 100n 100n 20m 40m)")
+                        continue
+
+            cleaned_lines.append(raw_ln)
+
+        return "\n".join(cleaned_lines)
 
     def execute_and_evaluate(
         self,
