@@ -135,6 +135,7 @@ class HermesAgent:
         skills_summary = "\n".join([f"- `{s['name']}`: {s['description']}" for s in skills]) if skills else "No skills indexed yet."
 
         tools_schema_json = json.dumps(self.tools.get_tool_schemas(), indent=2)
+        pins_line = " ".join(self.tools.pins) if hasattr(self.tools, "pins") and self.tools.pins else "INP INM OUT VCC GND"
 
         prompt = f"""{soul}
 
@@ -165,13 +166,14 @@ Available Tools:
 4. IF a failure reveals a new design trap, invoke `manage_memory` with action="add" to record the trap in MEMORY.md.
 5. REVISE and re-verify until 100% pass rate is achieved.
 6. ONCE fully verified, call `save_subcircuit_blueprint` to record your winning topology into skills/!
-7. When you are done or providing your final candidate, output:
+7. When you are done or providing your final candidate, output the FULL complete SPICE subcircuit.
+CRITICAL: NEVER use ellipses, placeholders, or summaries in the netlist. Every single transistor (Q/M), resistor (R), capacitor (C), and `.model` card must be explicitly written out:
 <architecture_summary>
-...
+[Explain your chosen topology, biasing choices, and sizing rationale]
 </architecture_summary>
 <spice_netlist>
-.subckt {self.tools.dut_name} ...
-...
+.subckt {self.tools.dut_name} {pins_line}
+* Transistor level circuit components and models
 .ends {self.tools.dut_name}
 </spice_netlist>
 """
@@ -202,17 +204,28 @@ Available Tools:
 
         return calls
 
+    def _is_meaningful_netlist(self, netlist: str) -> bool:
+        """Checks that netlist is not an empty stub with just ellipses or comments."""
+        if not netlist or ".subckt" not in netlist.lower() or ".ends" not in netlist.lower():
+            return False
+        # Reject literal placeholder netlists
+        if re.search(r'\.\.\.', netlist) and len(netlist.strip().splitlines()) <= 5:
+            return False
+        lines = [ln.strip() for ln in netlist.splitlines()]
+        elem_lines = [ln for ln in lines if ln and ln[0].upper() in "RCLQMDJVIX" and not ln.startswith(".")]
+        return len(elem_lines) >= 3
+
     def extract_netlist(self, text: str) -> Optional[str]:
         """Extracts SPICE netlist from response text."""
         m_net = re.search(r'<spice_netlist>(.*?)</spice_netlist>', text, re.DOTALL | re.IGNORECASE)
-        if m_net:
+        if m_net and self._is_meaningful_netlist(m_net.group(1).strip()):
             return m_net.group(1).strip()
         m_code = re.search(r'```(?:spice|cir)?\s*(\.subckt.*?\bend\w*)\s*```', text, re.DOTALL | re.IGNORECASE)
-        if m_code:
+        if m_code and self._is_meaningful_netlist(m_code.group(1).strip()):
             return m_code.group(1).strip()
         # Require .subckt at beginning of a line to avoid matching error messages or text descriptions
         m_sub = re.search(r'(?m)^\s*(\.subckt\b[\s\S]*?^\s*\.ends\b[^\r\n]*)', text, re.IGNORECASE)
-        if m_sub:
+        if m_sub and self._is_meaningful_netlist(m_sub.group(1).strip()):
             return m_sub.group(1).strip()
         return None
 
@@ -237,6 +250,13 @@ Available Tools:
             max_tokens=8192,
             tag=f"hermes_turn_{turn_idx}"
         )
+        logger.info(f"[Hermes Turn {turn_idx} Raw Response]:\n{resp_text}")
+        try:
+            turn_log_path = os.path.join(self.workspace_dir, f"turn_{turn_idx}.log")
+            with open(turn_log_path, "w", encoding="utf-8") as f:
+                f.write(resp_text)
+        except Exception:
+            pass
 
         thought = ""
         m_thought = re.search(r'<(?:thought|think)>(.*?)</(?:thought|think)>', resp_text, re.DOTALL | re.IGNORECASE)
@@ -274,7 +294,9 @@ Available Tools:
                 # Check if netlist validation or verification was run
                 if name in ("validate_netlist_syntax", "verify_circuit_pdg_gate"):
                     if isinstance(args, dict) and args.get("netlist"):
-                        turn_result.netlist_extracted = output.get("cleaned_netlist") or args.get("netlist")
+                        candidate_nl = output.get("cleaned_netlist") or args.get("netlist")
+                        if self._is_meaningful_netlist(candidate_nl):
+                            turn_result.netlist_extracted = candidate_nl
 
                 # Check if simulation was run
                 if name == "verify_circuit_pdg_gate":
