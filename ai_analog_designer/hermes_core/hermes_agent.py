@@ -210,10 +210,10 @@ Available Tools:
         m_code = re.search(r'```(?:spice|cir)?\s*(\.subckt.*?\bend\w*)\s*```', text, re.DOTALL | re.IGNORECASE)
         if m_code:
             return m_code.group(1).strip()
-        if ".subckt" in text.lower() and ".ends" in text.lower():
-            m_sub = re.search(r'(\.subckt.*?\b\.ends[^\n]*)', text, re.DOTALL | re.IGNORECASE)
-            if m_sub:
-                return m_sub.group(1).strip()
+        # Require .subckt at beginning of a line to avoid matching error messages or text descriptions
+        m_sub = re.search(r'(?m)^\s*(\.subckt\b[\s\S]*?^\s*\.ends\b[^\r\n]*)', text, re.IGNORECASE)
+        if m_sub:
+            return m_sub.group(1).strip()
         return None
 
     def run_turn(self, turn_idx: int) -> AgentTurnResult:
@@ -270,6 +270,11 @@ Available Tools:
                 logger.info(f"Hermes invoking tool: '{name}'")
                 output = self.tools.dispatch(name, args)
                 tool_outputs.append({"tool": name, "output": output})
+
+                # Check if netlist validation or verification was run
+                if name in ("validate_netlist_syntax", "verify_circuit_pdg_gate"):
+                    if isinstance(args, dict) and args.get("netlist"):
+                        turn_result.netlist_extracted = output.get("cleaned_netlist") or args.get("netlist")
 
                 # Check if simulation was run
                 if name == "verify_circuit_pdg_gate":
