@@ -397,3 +397,24 @@ pins: [{pins_str}]
 
         else:
             return {"status": "ERROR", "message": f"Unsupported action: '{action}'"}
+
+    def adapt_blueprint_to_dut(self, blueprint_code: str, target_subckt: Optional[str] = None) -> str:
+        """Adapts a blueprint subcircuit netlist to match the target DUT name and pin interface."""
+        target_name = (target_subckt or self.dut_name).upper()
+        pins_list = [p.get("name", str(p)) if isinstance(p, dict) else str(p) for p in self.pins]
+        pins_line = " ".join(pins_list)
+
+        # 1. Clean markdown fences or commentary
+        code = re.sub(r"^\s*```[a-zA-Z]*\s*$", "", blueprint_code, flags=re.M).strip()
+
+        # 2. Find the main .subckt header
+        m_head = re.search(r'(?m)^\s*\.subckt\s+([a-zA-Z0-9_]+)\s+.*$', code, re.I)
+        if m_head:
+            old_name = m_head.group(1)
+            code = code[:m_head.start()] + f".subckt {target_name} {pins_line}" + code[m_head.end():]
+            code = re.sub(r'(?m)^\s*\.ends\s+' + re.escape(old_name) + r'\b', f".ends {target_name}", code, flags=re.I)
+        elif not re.search(r'(?m)^\s*\.subckt\b', code, re.I):
+            code = f".subckt {target_name} {pins_line}\n" + code + f"\n.ends {target_name}\n"
+
+        return code
+

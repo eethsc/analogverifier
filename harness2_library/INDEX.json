@@ -55,7 +55,21 @@
       "cue": "Unsatisfied specs on LM393B: ['VCC', 'VCC', 'VID', 'VID']",
       "delta": 20.5,
       "path": "comparator\\LM393B"
+    },
+    {
+      "task_id": "LM393_VERIFIED",
+      "category": "comparator",
+      "cue": "Synthesizing LM393_VERIFIED (comparator) with Hermes Autonomous Agent",
+      "delta": 100.0,
+      "path": "comparator\\LM393_VERIFIED"
+    },
+    {
+      "task_id": "LM393_VERIFIED",
+      "category": "comparator",
+      "cue": "Synthesizing LM393_VERIFIED (comparator) with Hermes Autonomous Agent",
+      "delta": 100.0,
+      "path": "comparator\\LM393_VERIFIED"
     }
   ],
-  "count": 8
+  "count": 10
 }

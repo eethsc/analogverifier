@@ -62,7 +62,7 @@ class HermesAnalogWorkflowRunner:
           4. Execute autonomous agent loop with multi-turn tool interaction.
           5. Sync newly discovered skills and memories back into Harness² library.
         """
-        part_name = ic_info.get("name", "ANALOG_IC")
+        part_name = ic_info.get("part_name") or ic_info.get("name") or "ANALOG_IC"
         subckt_name = re.sub(r'[^a-zA-Z0-9_]', '_', part_name).upper()
         category = ic_info.get("category", "analog_ic")
 
@@ -171,18 +171,45 @@ The subcircuit must operate with its negative supply pin tied to 0 V (single sup
         best_netlist = loop_res.get("best_netlist")
         best_pass_rate = loop_res.get("best_pass_rate", 0.0)
 
-        # 6. Final verification & Artifact Generation
+        # 6. Final verification & Artifact Generation (with Harness² Blueprint Anchor)
         final_eval = {}
         if best_netlist:
             final_eval = tools.verify_circuit_pdg_gate(best_netlist, tag="final_hermes_harness2")
-            final_pass_rate = final_eval.get("pass_rate_percent", best_pass_rate)
+            best_pass_rate = final_eval.get("pass_rate_percent", best_pass_rate)
 
-            # Write final netlist file
+        if not best_netlist or best_pass_rate < 50.0:
+            logger.info(f"Agent direct synthesis score ({best_pass_rate:.1f}%) < 50%. Activating Harness² Blueprint Adaptation...")
+            bp_res = tools.retrieve_subcircuit_blueprint(query=part_name, category=category)
+            if not bp_res.get("blueprints"):
+                bp_res = tools.retrieve_subcircuit_blueprint(query=category, category=category)
+            if not bp_res.get("blueprints"):
+                bp_res = tools.retrieve_subcircuit_blueprint(query="comparator" if "comp" in category.lower() else "opamp")
+
+            for bp in bp_res.get("blueprints", []):
+                raw_code = bp.get("content", "")
+                m_spice = re.search(r'```(?:spice)?\s*(\.subckt[\s\S]*?\.ends[^\r\n]*)', raw_code, re.I)
+                candidate_raw = m_spice.group(1).strip() if m_spice else ""
+                if not candidate_raw and ".subckt" in raw_code.lower() and ".ends" in raw_code.lower():
+                    m_sub = re.search(r'(?m)^\s*(\.subckt\b[\s\S]*?^\s*\.ends\b[^\r\n]*)', raw_code, re.I)
+                    if m_sub:
+                        candidate_raw = m_sub.group(1).strip()
+
+                if candidate_raw:
+                    adapted = tools.adapt_blueprint_to_dut(candidate_raw, subckt_name)
+                    eval_try = tools.verify_circuit_pdg_gate(adapted, tag="harness2_blueprint_anchor")
+                    if eval_try.get("pass_rate_percent", 0.0) > best_pass_rate:
+                        logger.info(f"Harness² Blueprint Adaptation succeeded with {eval_try.get('pass_rate_percent'):.1f}% pass rate!")
+                        best_netlist = adapted
+                        best_pass_rate = eval_try.get("pass_rate_percent", 0.0)
+                        final_eval = eval_try
+                        break
+
+        final_pass_rate = best_pass_rate
+        if best_netlist:
             final_cir_path = os.path.join(self.output_dir, f"{subckt_name}_FINAL_HERMES_HARNESS2.cir")
             with open(final_cir_path, "w", encoding="utf-8") as f:
                 f.write(best_netlist)
         else:
-            final_pass_rate = 0.0
             final_cir_path = None
 
         # 7. Synchronize back to HarnessTree & HarnessLibrary

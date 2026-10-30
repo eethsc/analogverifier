@@ -135,7 +135,10 @@ class HermesAgent:
         skills_summary = "\n".join([f"- `{s['name']}`: {s['description']}" for s in skills]) if skills else "No skills indexed yet."
 
         tools_schema_json = json.dumps(self.tools.get_tool_schemas(), indent=2)
-        pins_line = " ".join(self.tools.pins) if hasattr(self.tools, "pins") and self.tools.pins else "INP INM OUT VCC GND"
+        if hasattr(self.tools, "pins") and self.tools.pins:
+            pins_line = " ".join([p.get("name", str(p)) if isinstance(p, dict) else str(p) for p in self.tools.pins])
+        else:
+            pins_line = "INP INM OUT VCC GND"
 
         prompt = f"""{soul}
 
@@ -297,6 +300,14 @@ CRITICAL: NEVER use ellipses, placeholders, or summaries in the netlist. Every s
                         candidate_nl = output.get("cleaned_netlist") or args.get("netlist")
                         if self._is_meaningful_netlist(candidate_nl):
                             turn_result.netlist_extracted = candidate_nl
+                            # Proactively evaluate physical performance if syntax is valid
+                            if name == "validate_netlist_syntax" and output.get("is_valid", False):
+                                eval_out = self.tools.verify_circuit_pdg_gate(candidate_nl, tag=f"turn{turn_idx}")
+                                turn_result.pass_rate = eval_out.get("pass_rate_percent", 0.0)
+                                turn_result.unique_pass_rate = eval_out.get("unique_kind_pass_rate_pct", 0.0)
+                                turn_result.passed_specs = eval_out.get("passed_specs", 0)
+                                turn_result.total_specs = eval_out.get("total_specs", 0)
+                                tool_outputs.append({"tool": "auto_eval_physical_gate", "output": eval_out})
 
                 # Check if simulation was run
                 if name == "verify_circuit_pdg_gate":
@@ -311,9 +322,29 @@ CRITICAL: NEVER use ellipses, placeholders, or summaries in the netlist. Every s
                 f"<tool_output name=\"{o['tool']}\">\n{json.dumps(o['output'], indent=2)}\n</tool_output>"
                 for o in tool_outputs
             ])
+
+            guidance = []
+            pins_line = " ".join([p.get("name", str(p)) if isinstance(p, dict) else str(p) for p in self.tools.pins]) if hasattr(self.tools, "pins") and self.tools.pins else "INP INM OUT VCC GND"
+
+            if any(o['tool'] == 'retrieve_subcircuit_blueprint' for o in tool_outputs):
+                guidance.append(
+                    f"Blueprint retrieved. Synthesize your complete transistor-level SPICE netlist for '{self.tools.dut_name}'. "
+                    f"Header signature: .subckt {self.tools.dut_name} {pins_line}. "
+                    f"Write out every transistor, bias component, and .model card. Verify using `verify_circuit_pdg_gate`."
+                )
+            if any(o['tool'] in ('validate_netlist_syntax', 'verify_circuit_pdg_gate', 'auto_eval_physical_gate') for o in tool_outputs):
+                if turn_result.pass_rate < 100.0:
+                    guidance.append(
+                        f"Current Pass Rate: {turn_result.pass_rate:.1f}% ({turn_result.passed_specs}/{turn_result.total_specs} specs passed). "
+                        f"Inspect diagnostic feedback and adjust transistor sizing or bias currents to meet failing specifications."
+                    )
+                else:
+                    guidance.append("Target achieved: 100% pass rate! Provide final <architecture_summary> and <spice_netlist> to terminate.")
+
+            guidance_str = "\n".join(guidance) if guidance else "Analyze these results, reflect on any discrepancies, and proceed."
             self.messages.append({
                 "role": "user",
-                "content": f"[TOOL EXECUTION RESULTS]:\n{tool_feedback}\n\nAnalyze these results, reflect on any discrepancies, and proceed."
+                "content": f"[TOOL EXECUTION RESULTS]:\n{tool_feedback}\n\n[NEXT ACTION DIRECTIVE]:\n{guidance_str}"
             })
 
         # Check for extracted netlist
@@ -360,7 +391,7 @@ CRITICAL: NEVER use ellipses, placeholders, or summaries in the netlist. Every s
 
             turn_res = self.run_turn(turn)
 
-            if turn_res.netlist_extracted and turn_res.pass_rate >= best_pass_rate:
+            if turn_res.netlist_extracted and (turn_res.pass_rate > best_pass_rate or not best_netlist):
                 best_pass_rate = turn_res.pass_rate
                 best_netlist = turn_res.netlist_extracted
                 best_turn = turn_res

@@ -71,7 +71,7 @@ class Harness2CircuitArchitect:
         prior_feedback: Optional[str] = None
     ) -> Dict[str, Any]:
         """Synthesizes a SPICE netlist under a specific harness tree."""
-        part_name = ic_info.get("name", "ANALOG_IC")
+        part_name = ic_info.get("part_name") or ic_info.get("name") or "ANALOG_IC"
         subckt_name = re.sub(r'[^a-zA-Z0-9_]', '_', part_name).upper()
 
         pins_summary = "\n".join([
@@ -181,7 +181,7 @@ The subcircuit must work with its negative supply pin tied to 0 V (single supply
           3. Contrasts behaviors and composes the evolved harness tree
           4. Returns (winning_res, winning_eval, composed_tree, decision_notes)
         """
-        part_name = ic_info.get("name", "ANALOG_IC")
+        part_name = ic_info.get("part_name") or ic_info.get("name") or "ANALOG_IC"
         feedback = base_eval.get("diagnostic_feedback", "")
         failed_specs = [e for e in base_eval.get("spec_evaluations", []) if not e.get("passed")]
         compiler_errors = base_eval.get("simulation_errors", [])
@@ -294,7 +294,7 @@ The subcircuit must work with its negative supply pin tied to 0 V (single supply
         Backward-compatible interface with AICircuitArchitect.
         Bootstraps on iteration 1 and synthesizes under the active Harness² tree.
         """
-        part_name = ic_info.get("name", "ANALOG_IC")
+        part_name = ic_info.get("part_name") or ic_info.get("name") or "ANALOG_IC"
         if iteration == 1:
             self.bootstrap_for_device(category=ic_info.get("category", "ANALOG"), part_name=part_name)
 
