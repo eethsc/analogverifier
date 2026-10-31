@@ -234,7 +234,7 @@ class LLMClient:
 
     def complete(
         self,
-        prompt: str,
+        prompt: str = "",
         system_prompt: Optional[str] = None,
         model: Optional[str] = None,
         temperature: float = 0.2,
@@ -242,11 +242,18 @@ class LLMClient:
         response_format: Optional[Dict[str, str]] = None,
         retries: int = 3,
         tag: str = "",
+        messages: Optional[List[Dict[str, Any]]] = None,
     ) -> str:
-        messages = []
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
-        messages.append({"role": "user", "content": prompt})
+        if messages is not None:
+            messages_payload = list(messages)
+            if system_prompt and not any(m.get("role") == "system" for m in messages_payload):
+                messages_payload.insert(0, {"role": "system", "content": system_prompt})
+        else:
+            messages_payload = []
+            if system_prompt:
+                messages_payload.append({"role": "system", "content": system_prompt})
+            if prompt:
+                messages_payload.append({"role": "user", "content": prompt})
 
         if model is None:
             for prefix, env in TASK_MODEL_ENV:
@@ -260,7 +267,7 @@ class LLMClient:
         last_err = None
         for m in chain:
             for attempt in range(1, retries + 1):
-                payload: Dict[str, Any] = {"model": m, "messages": messages,
+                payload: Dict[str, Any] = {"model": m, "messages": messages_payload,
                                            "temperature": temperature, "max_tokens": max_tokens}
                 payload.update(model_extra_body(self.provider, m))
                 if response_format and self.supports_json_mode:

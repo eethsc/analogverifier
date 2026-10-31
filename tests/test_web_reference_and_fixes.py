@@ -112,3 +112,58 @@ R2 VCC OUT 4k
 .model QNPN NPN (IS=1e-14 BF=100)
 .ends TPA3116D2"""
         assert agent._is_meaningful_netlist(good_netlist)
+
+
+def test_parse_tool_calls_recovers_unclosed_tags_and_clamps_monologues():
+    """Verifies that missing </tool_call> closing tags and monologue hallucination loops are handled cleanly."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tools = HermesAnalogTools(
+            output_dir=tmpdir,
+            dut_name="TPS62160-Q1",
+            pins=[{"name": "VIN"}, {"name": "GND"}],
+            specifications=[],
+            pdg_schedule={},
+        )
+        agent = HermesAgent(workspace_dir=tmpdir, tools=tools)
+
+        # Case 1: Missing </tool_call> closing tag (exact Turn 1 failure reproduction)
+        raw_turn1 = """<tool_call>
+{"name": "retrieve_subcircuit_blueprint", "arguments": {"query": "TPS62160 step-down converter DCS-Control transistor topology", "category": "voltage_reference"}}"""
+
+        calls1 = agent.parse_tool_calls(raw_turn1)
+        assert len(calls1) == 1
+        assert calls1[0]["name"] == "retrieve_subcircuit_blueprint"
+        assert "TPS62160" in calls1[0]["arguments"]["query"]
+
+        # Case 2: Monologue hallucination flood with [ASSISTANCE]: (exact Turn 5 failure reproduction)
+        raw_turn5 = """<tool_call>
+{"name": "search_web_circuit_reference", "arguments": {"query": "TPS62160 DCS-Control PWM step-down converter internal schematic", "ic_name": "TPS62160-Q1", "category": "voltage_reference"}}
+
+[ASSISTANCE]: Let me search for more general PWM converter topologies and reference designs.</think>
+<tool_call>
+{"name": "search_web_circuit_reference", "arguments": {"query": "DCS-Control step-down converter transistor level topology", "ic_name": "TPS62160-Q1", "category": "voltage_reference"}}
+
+[ASSISTANCE]: Let me search for general PWM converter topology references.</think>
+<tool_call>
+{"name": "retrieve_subcircuit_blueprint", "arguments": {"query": "synchronous buck converter transistor level", "category": "voltage_reference"}}
+"""
+        calls5 = agent.parse_tool_calls(raw_turn5)
+        # Must be truncated before the fake [ASSISTANCE] monologue and clamped to 1 call
+        assert len(calls5) == 1
+        assert calls5[0]["name"] == "search_web_circuit_reference"
+        assert "TPS62160" in calls5[0]["arguments"]["query"]
+
+
+def test_native_messages_support_in_llm_client():
+    """Verifies that LLMClient accepts native chat messages list."""
+    from ai_analog_designer.llm_client import LLMClient
+    client = LLMClient()
+    native_msgs = [
+        {"role": "system", "content": "You are a circuit test agent."},
+        {"role": "user", "content": "Respond with OK."}
+    ]
+    # Verify complete method handles messages argument without error
+    import inspect
+    sig = inspect.signature(client.complete)
+    assert "messages" in sig.parameters
+    assert sig.parameters["messages"].default is None

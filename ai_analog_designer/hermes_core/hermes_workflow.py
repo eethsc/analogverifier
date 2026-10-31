@@ -201,8 +201,20 @@ The subcircuit must operate with its negative supply pin tied to 0 V (single sup
             if not bp_res.get("blueprints"):
                 bp_res = tools.retrieve_subcircuit_blueprint(query=category, category=category)
             if not bp_res.get("blueprints"):
-                bp_res = tools.retrieve_subcircuit_blueprint(query="comparator" if "comp" in category.lower() else "opamp")
+                cat_low = (category or "").lower()
+                if "comp" in cat_low:
+                    fallback_cat = "comparator"
+                elif any(k in cat_low for k in ["audio", "sound", "speaker", "btl"]):
+                    fallback_cat = "audio_amplifier"
+                elif any(k in cat_low for k in ["ref", "tl431", "shunt", "bandgap"]):
+                    fallback_cat = "voltage_reference"
+                elif any(k in cat_low for k in ["step", "buck", "dcdc", "converter", "regulat", "ldo", "power"]):
+                    fallback_cat = "power_management"
+                else:
+                    fallback_cat = "operational_amplifier"
+                bp_res = tools.retrieve_subcircuit_blueprint(query=fallback_cat)
 
+            candidates: List[str] = []
             for bp in bp_res.get("blueprints", []):
                 raw_code = bp.get("content", "")
                 m_spice = re.search(r'```(?:spice)?\s*(\.subckt[\s\S]*?\.ends[^\r\n]*)', raw_code, re.I)
@@ -211,16 +223,24 @@ The subcircuit must operate with its negative supply pin tied to 0 V (single sup
                     m_sub = re.search(r'(?m)^\s*(\.subckt\b[\s\S]*?^\s*\.ends\b[^\r\n]*)', raw_code, re.I)
                     if m_sub:
                         candidate_raw = m_sub.group(1).strip()
-
                 if candidate_raw:
-                    adapted = tools.adapt_blueprint_to_dut(candidate_raw, subckt_name)
-                    eval_try = tools.verify_circuit_pdg_gate(adapted, tag="harness2_blueprint_anchor")
-                    if eval_try.get("pass_rate_percent", 0.0) > best_pass_rate:
-                        logger.info(f"Harness² Blueprint Adaptation succeeded with {eval_try.get('pass_rate_percent'):.1f}% pass rate!")
-                        best_netlist = adapted
-                        best_pass_rate = eval_try.get("pass_rate_percent", 0.0)
-                        final_eval = eval_try
-                        break
+                    candidates.append(candidate_raw)
+
+            # Also check web reference spice hints if available
+            if web_res and web_res.get("spice_hints"):
+                for hint in web_res["spice_hints"]:
+                    if ".subckt" in hint.lower() and ".ends" in hint.lower():
+                        candidates.append(hint)
+
+            for cand_raw in candidates:
+                adapted = tools.adapt_blueprint_to_dut(cand_raw, subckt_name)
+                eval_try = tools.verify_circuit_pdg_gate(adapted, tag="harness2_blueprint_anchor")
+                if eval_try.get("pass_rate_percent", 0.0) > best_pass_rate:
+                    logger.info(f"Harness² Blueprint Adaptation succeeded with {eval_try.get('pass_rate_percent'):.1f}% pass rate!")
+                    best_netlist = adapted
+                    best_pass_rate = eval_try.get("pass_rate_percent", 0.0)
+                    final_eval = eval_try
+                    break
 
         final_pass_rate = best_pass_rate
         if best_netlist:

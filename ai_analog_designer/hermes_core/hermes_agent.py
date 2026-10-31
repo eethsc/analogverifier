@@ -150,10 +150,12 @@ class HermesAgent:
 (Use tool `retrieve_subcircuit_blueprint` to fetch full schematics and SPICE code)
 
 === TOOL CALLING PROTOCOL ===
-You have access to specialized tools. When you need to inspect blueprints, validate syntax, execute simulation, or update memory, invoke tools using either standard function calling or the Hermes `<tool_call>` format:
+You have access to specialized tools. When you need to inspect blueprints, validate syntax, execute simulation, or update memory, invoke tools using the Hermes `<tool_call>` format:
 <tool_call>
-{{"name": "<tool_name>", "arguments": {{...}}}}
+{"name": "<tool_name>", "arguments": {...}}
 </tool_call>
+IMPORTANT: You MUST write the closing `</tool_call>` tag immediately after the JSON!
+CRITICAL: Execute ONLY ONE or TWO tool calls per turn. NEVER simulate future turns or write monologue text like '[ASSISTANCE]:' or '[USER]:'. Wait for tool results before proceeding.
 
 Available Tools:
 {tools_schema_json}
@@ -183,29 +185,84 @@ CRITICAL: NEVER use ellipses, placeholders, or undefined X-subcircuit stubs in t
         return prompt.strip()
 
     def parse_tool_calls(self, text: str) -> List[Dict[str, Any]]:
-        """Extracts tool calls from LLM response text (supports Hermes <tool_call> tags and markdown JSON)."""
-        calls = []
-        # Pattern 1: <tool_call> ... </tool_call>
-        for m in re.finditer(r'<tool_call>\s*(.*?)\s*</tool_call>', text, re.DOTALL | re.IGNORECASE):
+        """
+        Extracts tool calls from LLM response text with robust fault tolerance:
+          - Handles missing </tool_call> closing tags
+          - Recovers JSON blocks from unclosed tags using bracket matching / repair
+          - Clamps hallucinated monologue loops (max 2 tool calls per turn)
+        """
+        calls: List[Dict[str, Any]] = []
+
+        # Step 0: Truncate hallucinated roleplay loops if the model started generating fake monologues
+        # e.g., "\n[ASSISTANCE]:" or "\n[USER]:"
+        clean_text = text
+        m_fake = re.search(r'(?m)^\s*\[(?:ASSISTANCE|ASSISTANT|USER|SYSTEM)\]\s*:', text)
+        if m_fake and m_fake.start() > 10:
+            clean_text = text[:m_fake.start()].strip()
+
+        # Pattern 1: Exact <tool_call> ... </tool_call>
+        for m in re.finditer(r'<tool_call>\s*(.*?)\s*</tool_call>', clean_text, re.DOTALL | re.IGNORECASE):
             raw_call = m.group(1).strip()
             try:
                 data = json.loads(raw_call)
-                if "name" in data:
+                if isinstance(data, dict) and "name" in data:
                     calls.append(data)
             except Exception:
-                pass
+                from ai_analog_designer.llm_client import repair_truncated_json
+                repaired = repair_truncated_json(raw_call)
+                if repaired and isinstance(repaired, dict) and "name" in repaired:
+                    calls.append(repaired)
 
-        # Pattern 2: ```tool_call ... ```
+        # Pattern 2: Unclosed <tool_call> tags (model emitted <tool_call>\n{...} and omitted </tool_call>)
         if not calls:
-            for m in re.finditer(r'```(?:tool_call|json)\s*({.*?"name":.*?})\s*```', text, re.DOTALL):
+            for m in re.finditer(r'<tool_call>\s*({[\s\S]*?})(?=\s*<tool_call>|\s*```|\s*$)', clean_text, re.IGNORECASE):
+                raw_call = m.group(1).strip()
+                try:
+                    data = json.loads(raw_call)
+                    if isinstance(data, dict) and "name" in data:
+                        calls.append(data)
+                except Exception:
+                    from ai_analog_designer.llm_client import repair_truncated_json
+                    repaired = repair_truncated_json(raw_call)
+                    if repaired and isinstance(repaired, dict) and "name" in repaired:
+                        calls.append(repaired)
+
+        # Pattern 3: ```tool_call ... ``` or ```json ... ```
+        if not calls:
+            for m in re.finditer(r'```(?:tool_call|json)\s*({[\s\S]*?"name"[\s\S]*?})\s*```', clean_text, re.DOTALL):
+                raw_call = m.group(1).strip()
+                try:
+                    data = json.loads(raw_call)
+                    if isinstance(data, dict) and "name" in data:
+                        calls.append(data)
+                except Exception:
+                    from ai_analog_designer.llm_client import repair_truncated_json
+                    repaired = repair_truncated_json(raw_call)
+                    if repaired and isinstance(repaired, dict) and "name" in repaired:
+                        calls.append(repaired)
+
+        # Pattern 4: Bare inline {"name": "...", "arguments": {...}}
+        if not calls:
+            for m in re.finditer(r'({[^{}]*"name"\s*:\s*"([a-zA-Z0-9_]+)"[^{}]*"arguments"\s*:\s*{[^{}]*}[^{}]*})', clean_text):
                 try:
                     data = json.loads(m.group(1).strip())
-                    if "name" in data:
+                    if isinstance(data, dict) and "name" in data:
                         calls.append(data)
                 except Exception:
                     pass
 
-        return calls
+        # Deduplicate and clamp to maximum 2 calls per turn to prevent hallucination floods
+        unique_calls: List[Dict[str, Any]] = []
+        seen = set()
+        for c in calls:
+            call_sig = f"{c.get('name')}||{json.dumps(c.get('arguments', {}), sort_keys=True)}"
+            if call_sig not in seen:
+                seen.add(call_sig)
+                unique_calls.append(c)
+            if len(unique_calls) >= 2:
+                break
+
+        return unique_calls
 
     def _is_meaningful_netlist(self, netlist: str) -> bool:
         """Checks that netlist is not an empty stub with just ellipses, comments, or undefined X-placeholders."""
@@ -238,18 +295,16 @@ CRITICAL: NEVER use ellipses, placeholders, or undefined X-subcircuit stubs in t
         """Executes a single conversational turn in the Hermes loop."""
         sys_prompt = self.compile_system_prompt()
 
-        # Build prompt from conversation messages
-        # To maximize model compatibility across all providers, format as system + user/assistant dialog
-        conv_text = "\n\n".join([
-            f"[{msg['role'].upper()}]:\n{msg['content']}"
-            for msg in self.messages
-        ])
-        full_user_prompt = f"### AGENT CONVERSATION HISTORY & CURRENT STATE (Turn {turn_idx}):\n\n{conv_text}\n\n[INSTRUCTION]: Continue your design, reflection, tool usage, or final netlist generation."
+        # Build native conversation messages to prevent single-string monologue hallucination
+        native_messages = [{"role": "system", "content": sys_prompt}]
+        for msg in self.messages:
+            native_messages.append({"role": msg["role"], "content": msg["content"]})
 
         logger.info(f"Hermes Agent executing turn {turn_idx}...")
         resp_text = self.llm_client.complete(
-            prompt=full_user_prompt,
+            prompt="",
             system_prompt=sys_prompt,
+            messages=native_messages,
             model=self.model,
             temperature=self.temperature,
             max_tokens=8192,
