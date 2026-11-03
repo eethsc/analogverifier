@@ -470,15 +470,63 @@ pins: [{pins_str}]
             return {"status": "ERROR", "message": f"Unsupported action: '{action}'"}
 
     def adapt_blueprint_to_dut(self, blueprint_code: str, target_subckt: Optional[str] = None) -> str:
-        """Adapts a blueprint subcircuit netlist to match the target DUT name and pin interface."""
+        """Adapts a blueprint subcircuit netlist to match the target DUT name and pin interface,
+        handling multi-channel mapping (e.g. dual comparators/opamps), substrate/thermal pad
+        termination, and preserving all physical transistor model cards."""
         target_name = (target_subckt or self.dut_name).upper()
-        pins_list = [p.get("name", str(p)) if isinstance(p, dict) else str(p) for p in self.pins]
-        pins_line = " ".join(pins_list)
+        pin_names = [p.get("name", str(p)) if isinstance(p, dict) else str(p) for p in self.pins]
+        pins_line = " ".join(pin_names)
 
         # 1. Clean markdown fences or commentary
         code = re.sub(r"^\s*```[a-zA-Z]*\s*$", "", blueprint_code, flags=re.M).strip()
 
-        # 2. Find the main .subckt header
+        # 2. Extract and preserve all .model definitions
+        models = re.findall(r'(?m)^\s*\.model\s+[^\r\n]+', code, re.I)
+
+        # 3. Classify target pins
+        vcc_pin = next((p for p in pin_names if p.upper() in ('VCC', 'VDD', 'VP', 'PVCC', 'AVCC')), 'Vcc')
+        gnd_pin = next((p for p in pin_names if p.upper() in ('GND', 'VSS', '0')), 'GND')
+        thermal_pins = [p for p in pin_names if any(k in p.upper() for k in ('THERMAL', 'POWERPAD', 'EPAD', 'TAB', 'SUB'))]
+
+        def is_pos(p: str) -> bool:
+            up = p.upper()
+            return any(up.endswith(s) for s in ('_P', 'P', '+', 'PLUS')) and not any(up.endswith(s) for s in ('_N', 'N', '-', 'MINUS'))
+
+        def is_neg(p: str) -> bool:
+            up = p.upper()
+            return any(up.endswith(s) for s in ('_N', 'N', '-', 'MINUS')) and not any(up.endswith(s) for s in ('_P', 'P', '+', 'PLUS'))
+
+        ch1_inp = next((p for p in pin_names if '1IN' in p.upper() and is_pos(p)), None)
+        ch1_inn = next((p for p in pin_names if '1IN' in p.upper() and is_neg(p)), None)
+        ch1_out = next((p for p in pin_names if '1OUT' in p.upper()), None)
+        ch2_inp = next((p for p in pin_names if '2IN' in p.upper() and is_pos(p)), None)
+        ch2_inn = next((p for p in pin_names if '2IN' in p.upper() and is_neg(p)), None)
+        ch2_out = next((p for p in pin_names if '2OUT' in p.upper()), None)
+
+        # 4. Check for single-channel comparator/opamp core inside blueprint
+        m_sub = re.search(r'(?m)^\s*\.subckt\s+([a-zA-Z0-9_]+)\s+[^\r\n]+([\s\S]*?)^\s*\.ends\b', code, re.I)
+        if m_sub and ch1_inp and ch1_inn and ch1_out and ch2_inp and ch2_inn and ch2_out:
+            core_body = m_sub.group(2).strip()
+            # Strip hoisted models from core body
+            core_body = re.sub(r'(?m)^\s*\.model\s+[^\r\n]+\n?', '', core_body).strip()
+            th_lines = "\n".join([f"R_TP_{i} {tp} {gnd_pin} 10Meg" for i, tp in enumerate(thermal_pins)])
+            models_block = "\n".join(models) + "\n\n" if models else ""
+
+            return f"""* Adapted Multi-Channel Architecture for {target_name}
+{models_block}.subckt {target_name} {pins_line}
+{th_lines}
+* Channel 1 Instantiation
+XU1 {ch1_inp} {ch1_inn} {ch1_out} {vcc_pin} {gnd_pin} {target_name}_CORE
+* Channel 2 Instantiation
+XU2 {ch2_inp} {ch2_inn} {ch2_out} {vcc_pin} {gnd_pin} {target_name}_CORE
+.ends {target_name}
+
+.subckt {target_name}_CORE INP INM OUT VCC GND
+{core_body}
+.ends {target_name}_CORE
+"""
+
+        # 5. Fallback: single subcircuit header replacement
         m_head = re.search(r'(?m)^\s*\.subckt\s+([a-zA-Z0-9_]+)\s+.*$', code, re.I)
         if m_head:
             old_name = m_head.group(1)
@@ -486,6 +534,9 @@ pins: [{pins_str}]
             code = re.sub(r'(?m)^\s*\.ends\s+' + re.escape(old_name) + r'\b', f".ends {target_name}", code, flags=re.I)
         elif not re.search(r'(?m)^\s*\.subckt\b', code, re.I):
             code = f".subckt {target_name} {pins_line}\n" + code + f"\n.ends {target_name}\n"
+
+        if models and not any(m in code for m in models):
+            code = "\n".join(models) + "\n\n" + code
 
         return code
 
