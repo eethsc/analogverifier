@@ -73,6 +73,7 @@ class HermesAgent:
 
         self.messages: List[Dict[str, str]] = []
         self.trajectory: List[AgentTurnResult] = []
+        self._prev_tool_signatures: List[str] = []
 
         self._ensure_workspace()
 
@@ -387,11 +388,33 @@ CRITICAL: NEVER use ellipses, placeholders, or undefined X-subcircuit stubs in t
             guidance = []
             pins_line = " ".join([p.get("name", str(p)) if isinstance(p, dict) else str(p) for p in self.tools.pins]) if hasattr(self.tools, "pins") and self.tools.pins else "INP INM OUT VCC GND"
 
+            # Check for repetition loops
+            current_call_sigs = [f"{c.get('name')}||{json.dumps(c.get('arguments', {}), sort_keys=True)}" for c in tool_calls]
+            is_repeating = (current_call_sigs == self._prev_tool_signatures) and not any(c.get("name") == "verify_circuit_pdg_gate" for c in tool_calls)
+            self._prev_tool_signatures = current_call_sigs
+
+            if is_repeating:
+                guidance.append(
+                    f"CRITICAL DIRECTIVE: You are repeating tool calls ({[c.get('name') for c in tool_calls]}) without progress. "
+                    f"STOP calling read-only tools or manage_memory. You MUST immediately synthesize the full transistor-level SPICE netlist "
+                    f"for '{self.tools.dut_name}' and evaluate it with `verify_circuit_pdg_gate`."
+                )
+
             if any(o['tool'] in ('retrieve_subcircuit_blueprint', 'search_web_circuit_reference') for o in tool_outputs):
                 guidance.append(
                     f"Reference & blueprint data retrieved. Synthesize your complete transistor-level SPICE netlist for '{self.tools.dut_name}'. "
                     f"Header signature: .subckt {self.tools.dut_name} {pins_line}. "
                     f"Write out every transistor (Q/M), passive component (R/C), and .model card without any X-placeholders. Verify using `verify_circuit_pdg_gate`."
+                )
+            if any(o['tool'] == 'manage_memory' for o in tool_outputs):
+                guidance.append(
+                    f"Memory operation complete. DO NOT call 'manage_memory' again. "
+                    f"You must now synthesize your physical transistor-level SPICE netlist for '{self.tools.dut_name}' "
+                    f"using real transistors (Q/M/D) and passives (R/C), and evaluate it with `verify_circuit_pdg_gate`."
+                )
+            if any(o['tool'] == 'save_subcircuit_blueprint' for o in tool_outputs):
+                guidance.append(
+                    f"Blueprint operation processed. Now proceed to synthesize and verify your circuit netlist via `verify_circuit_pdg_gate`."
                 )
             if any(o['tool'] in ('validate_netlist_syntax', 'verify_circuit_pdg_gate', 'auto_eval_physical_gate') for o in tool_outputs):
                 if turn_result.pass_rate < 100.0:
@@ -402,7 +425,10 @@ CRITICAL: NEVER use ellipses, placeholders, or undefined X-subcircuit stubs in t
                 else:
                     guidance.append("Target achieved: 100% pass rate! Provide final <architecture_summary> and <spice_netlist> to terminate.")
 
-            guidance_str = "\n".join(guidance) if guidance else "Analyze these results, reflect on any discrepancies, and proceed."
+            guidance_str = "\n".join(guidance) if guidance else (
+                f"Analyze these results. You must now produce or refine the transistor-level SPICE netlist "
+                f"for '{self.tools.dut_name}' and test it using `verify_circuit_pdg_gate`."
+            )
             self.messages.append({
                 "role": "user",
                 "content": f"[TOOL EXECUTION RESULTS]:\n{tool_feedback}\n\n[NEXT ACTION DIRECTIVE]:\n{guidance_str}"

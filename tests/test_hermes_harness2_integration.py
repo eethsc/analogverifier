@@ -228,7 +228,7 @@ def test_bidirectional_sync_back_to_harness(temp_workspace):
     tools.save_subcircuit_blueprint(
         name="tl431_shunt_core",
         category="voltage_reference",
-        subckt_code=".subckt TL431_CORE C R A\n.ends TL431_CORE",
+        subckt_code=".subckt TL431_CORE C R A\nQ1 C R A NPN\n.ends TL431_CORE",
         description="3-terminal precision shunt regulator core"
     )
     tools.manage_memory(action="add", content="TL431: Do not leak internal current to global node 0.")

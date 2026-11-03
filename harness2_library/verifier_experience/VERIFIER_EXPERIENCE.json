@@ -124,6 +124,56 @@
       "kind": "analog_ic_measurement",
       "canonical_unit": "\u03bcA",
       "magnitude_compare": false
+    },
+    {
+      "classes": [
+        "phase locked loop"
+      ],
+      "symbol_regex": "^V\\(input voltage \\(inputs except vco in\\)\\)$",
+      "name_regex": "input\\ voltage\\ \\(inputs\\ except\\ vco\\ in\\)",
+      "kind": "analog_ic_measurement",
+      "canonical_unit": "V",
+      "magnitude_compare": false
+    },
+    {
+      "classes": [
+        "phase locked loop"
+      ],
+      "symbol_regex": "^VCO\\s+control\\s+voltage\\s+at\\s+VCO\\s+IN$",
+      "name_regex": "vco\\ control\\ voltage\\ at\\ vco\\ in",
+      "kind": "analog_physical_measurement",
+      "canonical_unit": "V",
+      "magnitude_compare": false
+    },
+    {
+      "classes": [
+        "phase locked loop"
+      ],
+      "symbol_regex": "^lock\\s+frequency$",
+      "name_regex": "lock\\ frequency",
+      "kind": "analog_ic_design",
+      "canonical_unit": "MHz",
+      "magnitude_compare": false
+    },
+    {
+      "classes": [
+        "phase locked loop"
+      ],
+      "symbol_regex": "^Bias_Resistor$",
+      "name_regex": "bias\\ resistor",
+      "kind": "analog_ic_design",
+      "canonical_unit": "k\u03a9",
+      "magnitude_compare": false
+    },
+    {
+      "classes": [
+        "phase locked loop"
+      ],
+      "symbol_regex": "^VTH$",
+      "name_regex": "input\\ threshold\\ voltage\\ at\\ select,\\ vco\\ inhibit",
+      "kind": "analog_ic_physical_measurement",
+      "canonical_unit": "V",
+      "magnitude_compare": false
     }
   ],
   "v2_fixture_templates": {
@@ -133,7 +183,10 @@
     "analog_ic_verification": "* Automated LTspice Physical Measurement Fixture for VUVLO\n* Target: Step-Down Converter Undervoltage Lockout Threshold\n* Test Condition: Falling Input Voltage\n* Pure Physical Stimulus (No Behavioral Sources, No Logic Devices)\n\n.include \"golden_dut.sub\"\n\nVIN 0 N 0 ; Input voltage source for VUVLO test\nR1 N VIN 10k ; Pull-up/limiting resistor\n\n* --- DUT Instantiation ---\n* Nodes: SW, FB, VIN, GND, EN (assumed based on typical Step-Down Converter subcircuit)\nXDUT SW FB VIN GND EN DUT\n\n* --- Measurement Setup ---\n* VUVLO is defined as the falling input voltage threshold where the converter shuts down.\n* We monitor the input voltage (VIN) at the moment the converter turns off.\n* We assume an Enable pin (EN) is tied to VIN for a direct VUVLO test, or EN is pulled high.\n* If the DUT has an internal EN pin tied to VIN, VUVLO is simply the voltage at shutdown.\n* If external EN is used, the stimulus would modify EN. Here we assume VIN ramp tests the VUVLO.\n\n* --- Sweep and Measurement ---\n* A transient analysis with a slow voltage ramp on VIN detects the threshold.\n* The measurement captures the exact VIN voltage when the output ceases switching or EN goes low.\n\n.meas TRAN vuvlo TRIG v=0.5 rise=10 fall=10 TARG v(VIN) FROM=0 TO=50 COND=BELOW ; Finds the falling VUVLO threshold (example TARG level, adjust as needed for specific DUT behavior)\n* Note: The exact .meas command depends on the DUT's shutdown mechanism (output dropout vs EN pin).\n* A robust generic approach for \"Falling Input Voltage VUVLO\":\n.meas TRAN VUVLO_POINT TRIG v=3.0 rise=0.1 fall=0.1 TARG v(VIN) FROM=0 TO=10 COND=BELOW\n\n.end",
     "analog_ic_ven_h": "* Pure physical testbench for High level input threshold voltage (VEN_H)\n* Target: Step-Down Converter EN pin\n* DUT: golden_dut.sub\n* Measurement: ven_h\n\n.include \"golden_dut.sub\"\n\n* Stimulus: DC voltage sweep on EN pin to find threshold\nV_EN 0 1 0\n\n* Load and biasing (adjust per DUT requirements)\nR_LOAD 1 0 1k\nC_LOAD 1 0 1uF\n\n* DUT Instantiation\nXDUT 1 0 V_EN EN GND golden_dut\n\n* Measurement: Find V_EN when DUT output switches or EN pin crosses internal reference\n* Method: Measure the voltage on the EN pin at the point of switching.\n* Assumption: DUT has a defined threshold where it starts switching.\n* We use a pulse to stimulate and measure the steady-state voltage, or a DC sweep.\n* Here we perform a DC sweep on V_EN from 0 to 5V and measure the point where output changes.\n* However, for a pure threshold measurement, we typically apply a voltage and measure current, or vice versa.\n* For EN pin threshold, we often monitor the voltage at which the converter starts.\n\n.meas dc ven_h TRAN 0 10m 0 1m \n* Note: The above .meas is a placeholder. \n* A true threshold measurement requires detecting a point. \n* Since we cannot use behavioral 'if' statements, we rely on the DC operating point \n* or a transient observation. \n* Below is a setup for a DC sweep to find the threshold voltage manually or via .backannotation.\n* \n* Alternative: Use a PULSE to toggle EN and measure the resulting state.\n* \n* For this fixture, we will perform a DC sweep and extract the voltage \n* at which the output voltage changes state (if applicable). \n* Given the constraints, we measure the DC operating point of the EN pin \n* during a transient simulation where EN is pulsed.\n\n.dc V_EN 0 5 0.01\n\n.end",
     "analog_ic_ven_l": "* Automated LTspice Physical Measurement Fixture for VEN_L (Low level input threshold voltage)\n* Target: Step-Down Converter EN Pin Threshold Detection\n* Pure Physical Stimulus - No Behavioral Sources\n\n.include \"golden_dut.sub\"\n\nVEN_STIM VEN_STIM 0 PULSE(0 3.3 0 10n 10n 1u 10u)\n* Rising edge stimulus to trigger the EN logic threshold\n\nXDUT EN VIN SW L1 VOUT GND golden_dut\n\n* Measurement: Track EN pin voltage during the pulse window\n* Definition: Low level input threshold is the steady-state voltage when EN is asserted low\n.meas TRAN ven_l_avg avg V(EN) from=1u to=9u\n\n* Plot reference for manual verification\n.plot TRAN V(EN) V(VIN)\n\n.end",
-    "analog_ic_measurement": "* Automated LTspice Physical Measurement Fixture for Input Leakage Current (EN)\n* Target: Step-Down Converter\n* Specification: LKG_EN, \u03bcA, EN = VIN or GND\n\n* Pure physical testbench - No behavioral sources or logic devices\n.include \"golden_dut.sub\"\n\nVIN vdd 0 DC 5\nVEN en 0 PWL(0 5 1u 0 5)\n\n* DUT Instantiation\nXDUT vdd en vout gnd golden_dut\n\n* Measurement: Input leakage current when EN is high (VIN)\n.meas tran_lkg_en avg I(VEN) from=1u to=10u\n\n* Measurement: Input leakage current when EN is low (GND)\n.meas tran_lkg_en_gnd avg I(VEN) from=20u to=30u\n\n.tran 0 30u\n.end"
+    "analog_ic_measurement": "* Pure physical testbench for Input Voltage (inputs except VCO IN)\n* Target: Phase Locked Loop DUT\n* Test Conditions: VDD = 3 V, TA = 25\u00b0C\n\n.include \"golden_dut.sub\"\n\nVINP 0 3\nVINN 0 0\n\n* Input voltage source (differential pair input, excluding VCO IN)\n* Stimulus: DC offset sine wave suitable for PLL input range\nVINP 0 3 SINE(1.5 1.5 10k 0 0 0 1m)\nVINN 0 0 SINE(1.5 -1.5 10k 0 0 0 1m)\n\n* Power supply\nVDD 0 3\n\n* DUT Instantiation\nXDUT VINP VINN VDD GND input_voltage outputs XDUT\n\n* Measurement: Track the input voltage at the DUT input nodes\n.meas TRAN input_voltage_average avg VINP VINN 0 1m\n.meas TRAN input_voltage_peak pk VINP 0 1m\n\n.end",
+    "analog_physical_measurement": "* Pure physical testbench for VCO control voltage at VCO IN\n* Test Conditions: VDD = 3 V, TA = 25\u00b0C\n.include \"golden_dut.sub\"\n\nVDD VDD 0 3\n* VCO Control Voltage Source (Physical Stimulus)\n* Assuming VCO IN is the control node; adjust node name as per DUT subcircuit\nVCO_CTRL VCO_IN 0 SINE(0 1.65 10k 0 0 0 1m)\n\n* DUT Instantiation\nXDUT VCO_IN VCO_OUT VCO_CTRL VCO_GND VDD DUT\n\n* Measurement: Extract the voltage at the VCO IN node\n.meas TRAN VCO_CONTROL_VOLTAGE AVG V(VCO_IN) FROM=0 TO=1m\n\n.end",
+    "analog_ic_design": "* Automated LTspice Physical Measurement Fixture\n* Target: Bias Resistor (k\u03a9) within a Phase Locked Loop DUT\n* Test Conditions: VDD = 3 V, TA = 25\u00b0C\n* Pure Physical Analog Stimulus - No Behavioral Sources\n\n.include \"golden_dut.sub\"\n\nVDD 1 0 3\n\n* Bias Resistor under test connected between VDD and DUT input node\nR_Bias_Resistor 1 2 1k\n\n* DUT Instantiation (Phase Locked Loop)\n* Pin mapping: VDD, GND, Bias_In, Bias_Out, etc. adjusted to golden_dut.sub pins\nXDUT 2 0 Bias_In Bias_Out VDD GND\n\n* Measurement: Compute Resistance using Ohm's Law\n* IR(R_Bias_Resistor) gives current through resistor in Amps\n* V(1,2) gives voltage across resistor in Volts\n* R = V / I (in Ohms); divide by 1000 to get k\u03a9\n.meas bias_resistor R_eq V(1,2)/I(R_Bias_Resistor)/1000\n\n* Transient analysis to ensure steady-state measurement\n.tran 1ms 10ms\n\n.end",
+    "analog_ic_physical_measurement": "* Automated Physical Measurement Fixture for VTH (Input Threshold Voltage at Select/VCO Inhibit)\n* Target: Phase Locked Loop\n* Test Conditions: VI = VDD or GND, VDD = 3 V, TA = 25\u00b0C\n* Pure Physical Stimulus - No Behavioral Sources, No Logic Devices\n\n.include \"golden_dut.sub\"\n\nVDD VDD 0 3\n\n* --- Input Stimulus for Threshold Test ---\n* Applied VI across DUT select/inhibit node to find switching point\nVSIG VIN 0 PULSE(0 3 0n 10p 10p 1u 2u)\n\n* --- DUT Instantiation ---\n* Nodes: VIN, VTH (inhibit/select node), VDD, GND\nXDUT VIN VTH VDD GND DUT\n\n* --- Measurement ---\n* Measure the input voltage at the moment the DUT output toggles or changes state.\n* This captures the threshold voltage where the inhibit/select function switches.\n.meas TRAN vth VIN V=3 when V(OUT) crosses 1.5\n\n* --- Analysis ---\n* The measurement 'vth' captures the exact DC input voltage at the switching point.\n* For a complete DC sweep analysis, one would typically use .DC VIN 0 3 1mV\n* however, the PULSE source above provides the transient stimulus to find the threshold.\n\n.end"
   },
   "v3_unit_conversions": {
     "nV/rtHz": {

@@ -206,6 +206,8 @@ The subcircuit must operate with its negative supply pin tied to 0 V (single sup
                 fallback_cat = "voltage_reference"
             elif any(k in cat_low for k in ["step", "buck", "dcdc", "converter", "regulat", "ldo", "power"]):
                 fallback_cat = "power_management"
+            elif any(k in cat_low for k in ["pll", "vco", "phase", "detector", "frequency", "clock"]):
+                fallback_cat = "phase_locked_loop"
             else:
                 fallback_cat = "operational_amplifier"
 
@@ -239,10 +241,12 @@ The subcircuit must operate with its negative supply pin tied to 0 V (single sup
                         candidates.append(hint)
 
             for cand_raw in candidates:
+                if not agent._is_meaningful_netlist(cand_raw):
+                    continue
                 adapted = tools.adapt_blueprint_to_dut(cand_raw, subckt_name)
                 eval_try = tools.verify_circuit_pdg_gate(adapted, tag="harness2_blueprint_anchor")
                 cur_rate = eval_try.get("pass_rate_percent", 0.0)
-                if cur_rate > best_pass_rate or not best_netlist:
+                if cur_rate > best_pass_rate or (not best_netlist and cur_rate > 0.0):
                     logger.info(f"Harness² Blueprint Adaptation candidate passed with {cur_rate:.1f}% pass rate!")
                     best_netlist = adapted
                     best_pass_rate = cur_rate

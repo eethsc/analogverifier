@@ -399,6 +399,20 @@ class HermesAnalogTools:
         terminal_pins: Optional[List[str]] = None
     ) -> Dict[str, Any]:
         """Saves a subcircuit blueprint skill to skills/analog_blueprints/<name>/SKILL.md."""
+        # Strict Guardrail: Never save empty stubs without elements as reusable blueprints
+        clean_code = subckt_code.strip()
+        lines = [ln.strip() for ln in clean_code.splitlines()]
+        elem_lines = [ln for ln in lines if ln and ln[0].upper() in "RCLQMDJVI" and not ln.startswith(".")]
+        transistor_lines = [ln for ln in elem_lines if ln[0].upper() in "QMJ"]
+        if len(elem_lines) == 0:
+            logger.warning(f"Rejected save_subcircuit_blueprint for '{name}': lacks physical circuit elements (elems={len(elem_lines)})")
+            return {
+                "status": "REJECTED",
+                "error": "Cannot save empty blueprint. Blueprint must contain real physical circuit elements.",
+                "elem_count": len(elem_lines),
+                "transistor_count": len(transistor_lines)
+            }
+
         safe_name = re.sub(r'[^a-zA-Z0-9_-]', '_', name).lower()
         bp_dir = os.path.join(self.skills_dir, "analog_blueprints", safe_name)
         os.makedirs(bp_dir, exist_ok=True)
