@@ -84,12 +84,56 @@
       "kind": "load_reg",
       "canonical_unit": "%",
       "magnitude_compare": true
+    },
+    {
+      "classes": [
+        "step-down converter"
+      ],
+      "symbol_regex": "^VUVLO$",
+      "name_regex": "undervoltage\\ lockout\\ threshold",
+      "kind": "analog_ic_verification",
+      "canonical_unit": "V",
+      "magnitude_compare": false
+    },
+    {
+      "classes": [
+        "step-down converter"
+      ],
+      "symbol_regex": "^VEN_H$",
+      "name_regex": "high\\ level\\ input\\ threshold\\ voltage\\ \\(en\\)",
+      "kind": "analog_ic_ven_h",
+      "canonical_unit": "V",
+      "magnitude_compare": false
+    },
+    {
+      "classes": [
+        "step-down converter"
+      ],
+      "symbol_regex": "^VEN_L$",
+      "name_regex": "low\\ level\\ input\\ threshold\\ voltage\\ \\(en\\)",
+      "kind": "analog_ic_ven_l",
+      "canonical_unit": "V",
+      "magnitude_compare": false
+    },
+    {
+      "classes": [
+        "step-down converter"
+      ],
+      "symbol_regex": "^LKG_EN$",
+      "name_regex": "input\\ leakage\\ current\\ \\(en\\)",
+      "kind": "analog_ic_measurement",
+      "canonical_unit": "\u03bcA",
+      "magnitude_compare": false
     }
   ],
   "v2_fixture_templates": {
     "thd_n": "* Pure Physical Analog Audio Fixture for THD / THD+N\n.include \"{dut_netlist_path}\"\nXDUT {dut_pins} {dut_name}\n* Physical Power Supplies\nVPOS {vpos_pin} 0 DC {vsupply_pos}\nVNEG {vneg_pin} 0 DC {vsupply_neg}\n* Physical Pure Analog Sinusoidal Stimulus (1 kHz fundamental)\nVIN_P {inp_pin} 0 SINE(0 {vin_amp} 1k 25u)\nVIN_N {inn_pin} 0 SINE(0 -{vin_amp} 1k 25u)\n* Physical Passive Load Resistor\nRLOAD {outp_pin} {outn_pin} {r_load}\n* Fourier Harmonic Distortion Analysis Directive\n.four 1k 9 V({outp_pin}, {outn_pin})\n.tran 10u 20m 10m\n.meas tran v_rms RMS V({outp_pin}, {outn_pin}) from=15m to=20m\n.meas tran p_out AVG (V({outp_pin})-V({outn_pin}))*I(RLOAD) from=15m to=20m\n.end\n",
     "f_osc": "* Pure Physical Analog Frequency Fixture\n.include \"{dut_netlist_path}\"\nXDUT {dut_pins} {dut_name}\nVPOS {vpos_pin} 0 DC {vsupply_pos}\nVNEG {vneg_pin} 0 DC {vsupply_neg}\n* External timing capacitor/resistor if required\n.tran 10n 50u 10u\n.meas tran t1 when V({out_pin})=({vsupply_pos}/2) rise=5\n.meas tran t2 when V({out_pin})=({vsupply_pos}/2) rise=6\n.meas tran f_osc param 1/(t2-t1)\n.end\n",
-    "v_dropout": "* Pure Physical Analog LDO Dropout Fixture\n.include \"{dut_netlist_path}\"\nXDUT {dut_pins} {dut_name}\n* Input voltage swept down to find saturation / dropout threshold\nVIN {vin_pin} 0 DC {vin_nom}\nRLOAD {vout_pin} 0 {r_load}\n.dc VIN {vin_nom} 0.5 -0.05\n.meas dc v_dropout find (V({vin_pin})-V({vout_pin})) when V({vout_pin})=({vout_nom}*0.98)\n.end\n"
+    "v_dropout": "* Pure Physical Analog LDO Dropout Fixture\n.include \"{dut_netlist_path}\"\nXDUT {dut_pins} {dut_name}\n* Input voltage swept down to find saturation / dropout threshold\nVIN {vin_pin} 0 DC {vin_nom}\nRLOAD {vout_pin} 0 {r_load}\n.dc VIN {vin_nom} 0.5 -0.05\n.meas dc v_dropout find (V({vin_pin})-V({vout_pin})) when V({vout_pin})=({vout_nom}*0.98)\n.end\n",
+    "analog_ic_verification": "* Automated LTspice Physical Measurement Fixture for VUVLO\n* Target: Step-Down Converter Undervoltage Lockout Threshold\n* Test Condition: Falling Input Voltage\n* Pure Physical Stimulus (No Behavioral Sources, No Logic Devices)\n\n.include \"golden_dut.sub\"\n\nVIN 0 N 0 ; Input voltage source for VUVLO test\nR1 N VIN 10k ; Pull-up/limiting resistor\n\n* --- DUT Instantiation ---\n* Nodes: SW, FB, VIN, GND, EN (assumed based on typical Step-Down Converter subcircuit)\nXDUT SW FB VIN GND EN DUT\n\n* --- Measurement Setup ---\n* VUVLO is defined as the falling input voltage threshold where the converter shuts down.\n* We monitor the input voltage (VIN) at the moment the converter turns off.\n* We assume an Enable pin (EN) is tied to VIN for a direct VUVLO test, or EN is pulled high.\n* If the DUT has an internal EN pin tied to VIN, VUVLO is simply the voltage at shutdown.\n* If external EN is used, the stimulus would modify EN. Here we assume VIN ramp tests the VUVLO.\n\n* --- Sweep and Measurement ---\n* A transient analysis with a slow voltage ramp on VIN detects the threshold.\n* The measurement captures the exact VIN voltage when the output ceases switching or EN goes low.\n\n.meas TRAN vuvlo TRIG v=0.5 rise=10 fall=10 TARG v(VIN) FROM=0 TO=50 COND=BELOW ; Finds the falling VUVLO threshold (example TARG level, adjust as needed for specific DUT behavior)\n* Note: The exact .meas command depends on the DUT's shutdown mechanism (output dropout vs EN pin).\n* A robust generic approach for \"Falling Input Voltage VUVLO\":\n.meas TRAN VUVLO_POINT TRIG v=3.0 rise=0.1 fall=0.1 TARG v(VIN) FROM=0 TO=10 COND=BELOW\n\n.end",
+    "analog_ic_ven_h": "* Pure physical testbench for High level input threshold voltage (VEN_H)\n* Target: Step-Down Converter EN pin\n* DUT: golden_dut.sub\n* Measurement: ven_h\n\n.include \"golden_dut.sub\"\n\n* Stimulus: DC voltage sweep on EN pin to find threshold\nV_EN 0 1 0\n\n* Load and biasing (adjust per DUT requirements)\nR_LOAD 1 0 1k\nC_LOAD 1 0 1uF\n\n* DUT Instantiation\nXDUT 1 0 V_EN EN GND golden_dut\n\n* Measurement: Find V_EN when DUT output switches or EN pin crosses internal reference\n* Method: Measure the voltage on the EN pin at the point of switching.\n* Assumption: DUT has a defined threshold where it starts switching.\n* We use a pulse to stimulate and measure the steady-state voltage, or a DC sweep.\n* Here we perform a DC sweep on V_EN from 0 to 5V and measure the point where output changes.\n* However, for a pure threshold measurement, we typically apply a voltage and measure current, or vice versa.\n* For EN pin threshold, we often monitor the voltage at which the converter starts.\n\n.meas dc ven_h TRAN 0 10m 0 1m \n* Note: The above .meas is a placeholder. \n* A true threshold measurement requires detecting a point. \n* Since we cannot use behavioral 'if' statements, we rely on the DC operating point \n* or a transient observation. \n* Below is a setup for a DC sweep to find the threshold voltage manually or via .backannotation.\n* \n* Alternative: Use a PULSE to toggle EN and measure the resulting state.\n* \n* For this fixture, we will perform a DC sweep and extract the voltage \n* at which the output voltage changes state (if applicable). \n* Given the constraints, we measure the DC operating point of the EN pin \n* during a transient simulation where EN is pulsed.\n\n.dc V_EN 0 5 0.01\n\n.end",
+    "analog_ic_ven_l": "* Automated LTspice Physical Measurement Fixture for VEN_L (Low level input threshold voltage)\n* Target: Step-Down Converter EN Pin Threshold Detection\n* Pure Physical Stimulus - No Behavioral Sources\n\n.include \"golden_dut.sub\"\n\nVEN_STIM VEN_STIM 0 PULSE(0 3.3 0 10n 10n 1u 10u)\n* Rising edge stimulus to trigger the EN logic threshold\n\nXDUT EN VIN SW L1 VOUT GND golden_dut\n\n* Measurement: Track EN pin voltage during the pulse window\n* Definition: Low level input threshold is the steady-state voltage when EN is asserted low\n.meas TRAN ven_l_avg avg V(EN) from=1u to=9u\n\n* Plot reference for manual verification\n.plot TRAN V(EN) V(VIN)\n\n.end",
+    "analog_ic_measurement": "* Automated LTspice Physical Measurement Fixture for Input Leakage Current (EN)\n* Target: Step-Down Converter\n* Specification: LKG_EN, \u03bcA, EN = VIN or GND\n\n* Pure physical testbench - No behavioral sources or logic devices\n.include \"golden_dut.sub\"\n\nVIN vdd 0 DC 5\nVEN en 0 PWL(0 5 1u 0 5)\n\n* DUT Instantiation\nXDUT vdd en vout gnd golden_dut\n\n* Measurement: Input leakage current when EN is high (VIN)\n.meas tran_lkg_en avg I(VEN) from=1u to=10u\n\n* Measurement: Input leakage current when EN is low (GND)\n.meas tran_lkg_en_gnd avg I(VEN) from=20u to=30u\n\n.tran 0 30u\n.end"
   },
   "v3_unit_conversions": {
     "nV/rtHz": {

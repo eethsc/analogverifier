@@ -308,7 +308,7 @@ class StudioRequestHandler(SimpleHTTPRequestHandler):
 
             pdf_path = payload.get("pdf_path")
             user_prompt = payload.get("user_prompt", "").strip()
-            max_iterations = int(payload.get("max_iterations", 10))
+            max_iterations = int(payload.get("max_iterations", 20))
 
             if not pdf_path and not user_prompt:
                 self.send_json({"error": "Either a PDF datasheet or a natural language prompt is required."}, status=400)
@@ -687,11 +687,11 @@ class StudioRequestHandler(SimpleHTTPRequestHandler):
             <div>
               <label class="block text-slate-400 font-semibold mb-1">Max Closed Loops:</label>
               <select id="maxItersSelect" class="w-full bg-slate-900 border border-[var(--border)] text-slate-200 rounded-xl px-3 py-2 focus:outline-none focus:border-sky-400">
-                <option value="1">1 Iteration (Discovery Only)</option>
-                <option value="2" selected>2 Iterations (Recommended)</option>
-                <option value="3">3 Iterations</option>
-                <option value="5">5 Iterations</option>
-                <option value="10">10 Iterations (Max Convergence)</option>
+                <option value="2">2 Iterations (Fast Discovery)</option>
+                <option value="5">5 Iterations (Standard)</option>
+                <option value="10">10 Iterations</option>
+                <option value="15">15 Iterations (Deep Reasoning)</option>
+                <option value="20" selected>20 Iterations (Max Convergence - Recommended)</option>
               </select>
             </div>
             <div>
