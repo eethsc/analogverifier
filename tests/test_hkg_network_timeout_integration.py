@@ -69,6 +69,11 @@ def _parsed_document():
 
 
 def test_real_socket_timeouts_recover_on_frontier_page_retry(monkeypatch):
+    for name in (
+        "LLM_MODEL", "LLM_FALLBACK_MODELS", "LLM_EXTRACT_MODEL",
+        "LLM_HERMES_MODEL", "LLM_SYNTH_MODEL", "LLM_TB_MODEL",
+    ):
+        monkeypatch.delenv(name, raising=False)
     server = ThreadingHTTPServer(("127.0.0.1", 0), _TimeoutThenRecoverHandler)
     server.daemon_threads = True
     worker = threading.Thread(target=server.serve_forever, daemon=True)
