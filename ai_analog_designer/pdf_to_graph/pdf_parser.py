@@ -7,7 +7,7 @@ import urllib.request
 import urllib.error
 import concurrent.futures as cf
 import pymupdf
-from typing import Dict, List, Any, Optional
+from typing import Callable, Dict, List, Any, Optional
 
 DEFAULT_NVIDIA_API_KEY = os.getenv("NVIDIA_API_KEY", "")
 
@@ -204,7 +204,11 @@ class PDFDatasheetParser:
             return ["toc"]
         return classes
 
-    def parse_pdf(self, pdf_path: str) -> Dict[str, Any]:
+    def parse_pdf(
+        self,
+        pdf_path: str,
+        progress_callback: Optional[Callable[[int, int, int, Optional[str]], None]] = None,
+    ) -> Dict[str, Any]:
         """
         Parses all PDF pages concurrently using NVIDIA Nemotron-Parse.
         Returns unified dictionary with page-level provenance.
@@ -220,6 +224,7 @@ class PDFDatasheetParser:
         tables_found = []
 
         # Concurrently parse pages through Nemotron-Parse
+        completed_pages = 0
         with cf.ThreadPoolExecutor(max_workers=self.concurrency) as executor:
             future_to_idx = {
                 executor.submit(self.parse_page_with_nemotron, p_idx, doc): p_idx + 1
@@ -227,6 +232,7 @@ class PDFDatasheetParser:
             }
             for future in cf.as_completed(future_to_idx):
                 p_num = future_to_idx[future]
+                page_error = None
                 try:
                     res = future.result()
                     pages[p_num] = {
@@ -236,14 +242,19 @@ class PDFDatasheetParser:
                         "blocks": res.get("blocks", [])
                     }
                 except Exception as e:
+                    page_error = str(e)
                     raw_text = doc[p_num - 1].get_text()
                     pages[p_num] = {
                         "text": raw_text,
                         "layout_text": raw_text,
                         "classes": self.classify_page(raw_text),
                         "blocks": [],
-                        "error": str(e)
+                        "error": page_error
                     }
+                finally:
+                    completed_pages += 1
+                    if progress_callback:
+                        progress_callback(completed_pages, pages_to_process, p_num, page_error)
 
         # Also collect basic tables if detected by pymupdf
         for p_idx in range(pages_to_process):

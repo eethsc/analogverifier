@@ -131,6 +131,22 @@ R2 VDD OUT 10k
     assert res2["guardrail_status"] == "PASS"
 
 
+def test_compile_system_prompt_renders_tool_call_example(temp_workspace):
+    """The tool-call JSON example must be escaped inside the f-string prompt."""
+    tools = HermesAnalogTools(
+        output_dir=temp_workspace,
+        dut_name="PROMPT_TEST",
+        pins=[{"name": "INP"}, {"name": "OUT"}],
+        specifications=[],
+        pdg_schedule={},
+    )
+    agent = HermesAgent(workspace_dir=os.path.join(temp_workspace, "prompt_ws"), tools=tools)
+
+    prompt = agent.compile_system_prompt()
+
+    assert '{"name": "<tool_name>", "arguments": {...}}' in prompt
+
+
 def test_hermes_tools_blueprint_retrieval_and_saving(temp_workspace):
     """Verifies subcircuit blueprint retrieval and dynamic skill creation."""
     ws_dir = os.path.join(temp_workspace, "ws")

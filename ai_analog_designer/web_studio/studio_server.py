@@ -50,10 +50,17 @@ class StudioRequestHandler(SimpleHTTPRequestHandler):
         elif path == "/api/llm_config":
             from ..llm_client import LLMClient, spent_usd
             c = LLMClient()
-            self.send_json({"provider": c.provider, "model": c.default_model, "fallback_models": c.fallback_models,
-                            "extract_model": os.environ.get("LLM_EXTRACT_MODEL") or c.default_model,
-                            "synth_model": os.environ.get("LLM_SYNTH_MODEL") or c.default_model,
-                            "spent_usd": round(spent_usd(), 4)})
+            routing = c.routing_config()
+            self.send_json({
+                "provider": c.provider,
+                "model": c.default_model,
+                "fallback_models": c.fallback_models,
+                "extract_model": routing["routes"]["extract_specs"][0],
+                "synth_model": routing["routes"]["hermes_initial"][0],
+                "hermes_repair_model": routing["routes"]["hermes_repair"][0],
+                "routing": routing,
+                "spent_usd": round(spent_usd(), 4),
+            })
         elif path == "/api/status":
             task_id = query.get("task_id", [""])[0]
             self.serve_status_api(task_id)
@@ -402,18 +409,26 @@ class StudioRequestHandler(SimpleHTTPRequestHandler):
 
             with TASKS_LOCK:
                 if task_id in TASKS:
-                    TASKS[task_id]["status"] = "completed"
+                    has_valid_netlist = ".subckt" in final_netlist.lower()
+                    TASKS[task_id]["status"] = "completed" if has_valid_netlist else "completed_with_warnings"
                     TASKS[task_id]["current_phase"] = 6
-                    TASKS[task_id]["phase_title"] = "Completed"
+                    TASKS[task_id]["phase_title"] = "Completed" if has_valid_netlist else "Completed with warnings"
                     TASKS[task_id]["result_summary"] = {
                         "pass_rate_percent": result.get("summary", {}).get("pass_rate_percent", 0.0),
                         "part_name": result.get("summary", {}).get("part_name", "DUT"),
                         "subckt_name": result.get("summary", {}).get("subckt_name", "DUT"),
                         "iterations_count": len(result.get("summary", {}).get("iterations", [])),
-                        "netlist_code": final_netlist
+                        "netlist_code": final_netlist,
+                        "has_valid_netlist": has_valid_netlist,
                     }
                     timestamp = time.strftime("%H:%M:%S")
-                    TASKS[task_id]["logs"].append(f"[{timestamp}] [Phase 6: Success] Autonomous analog design & verification cycle finished successfully!")
+                    if has_valid_netlist:
+                        TASKS[task_id]["logs"].append(f"[{timestamp}] [Phase 6: Success] Autonomous analog design & verification cycle finished successfully!")
+                    else:
+                        TASKS[task_id]["logs"].append(
+                            f"[{timestamp}] [Phase 6: Warning] No valid SPICE netlist was produced. "
+                            "Run at least 2 iterations or inspect the Hermes turn log."
+                        )
         except Exception as e:
             logger.error(f"Task {task_id} failed: {e}", exc_info=True)
             with TASKS_LOCK:
@@ -672,11 +687,11 @@ class StudioRequestHandler(SimpleHTTPRequestHandler):
             <div>
               <label class="block text-slate-400 font-semibold mb-1">Max Closed Loops:</label>
               <select id="maxItersSelect" class="w-full bg-slate-900 border border-[var(--border)] text-slate-200 rounded-xl px-3 py-2 focus:outline-none focus:border-sky-400">
-                <option value="1">1 Iteration (Fast)</option>
-                <option value="2">2 Iterations</option>
+                <option value="1">1 Iteration (Discovery Only)</option>
+                <option value="2" selected>2 Iterations (Recommended)</option>
                 <option value="3">3 Iterations</option>
                 <option value="5">5 Iterations</option>
-                <option value="10" selected>10 Iterations (Max Convergence - Default)</option>
+                <option value="10">10 Iterations (Max Convergence)</option>
               </select>
             </div>
             <div>
@@ -736,12 +751,12 @@ class StudioRequestHandler(SimpleHTTPRequestHandler):
           <!-- Dual LLM Routing Details -->
           <div class="bg-slate-950 border border-slate-800/80 rounded-xl p-3 text-[11px] space-y-1 font-mono text-slate-400">
             <div class="flex items-center justify-between">
-              <span class="text-slate-500">Improver / Proposer:</span>
-              <span class="text-emerald-400 font-semibold">NVIDIA NIM 550B</span>
+              <span class="text-slate-500">Structured extraction:</span>
+              <span id="harness2ExtractModel" class="text-emerald-400 font-semibold">Loading model route</span>
             </div>
             <div class="flex items-center justify-between">
-              <span class="text-slate-500">Synthesizer / Probe:</span>
-              <span class="text-sky-400 font-semibold">OpenRouter Free</span>
+              <span class="text-slate-500">Initial synthesis:</span>
+              <span id="harness2SynthesisModel" class="text-sky-400 font-semibold">Loading model route</span>
             </div>
             <div class="flex items-center justify-between">
               <span class="text-slate-500">Cross-Task Transfer:</span>
@@ -892,8 +907,13 @@ class StudioRequestHandler(SimpleHTTPRequestHandler):
       loadHarness2Library();
       fetch('/api/llm_config').then(r => r.json()).then(c => {
         const el = document.getElementById('llmModelLabel');
+        const r = c.routing || {};
         el.textContent = `${c.provider}: ${c.synth_model}`;
-        el.title = `extract: ${c.extract_model} | synth: ${c.synth_model} | fallback: ${(c.fallback_models || []).join(', ')}`;
+        el.title = `scheduler: ${r.scheduler || 'legacy'} | extract: ${c.extract_model} | first synthesis: ${c.synth_model} | repair: ${c.hermes_repair_model || c.synth_model}`;
+        const extractEl = document.getElementById('harness2ExtractModel');
+        const synthesisEl = document.getElementById('harness2SynthesisModel');
+        if (extractEl) extractEl.textContent = c.extract_model;
+        if (synthesisEl) synthesisEl.textContent = `${c.synth_model} → ${c.hermes_repair_model || c.synth_model}`;
       }).catch(() => {});
     }
 
@@ -1160,9 +1180,9 @@ class StudioRequestHandler(SimpleHTTPRequestHandler):
           // Fetch fine-grained telemetry
           fetchTraceTelemetry(taskId);
 
-          if (data.status === 'completed') {
+          if (data.status === 'completed' || data.status === 'completed_with_warnings') {
             clearInterval(pollInterval);
-            onTaskCompleted(data);
+            onTaskCompleted(data, data.status === 'completed_with_warnings');
           } else if (data.status === 'failed') {
             clearInterval(pollInterval);
             onTaskFailed(data);
@@ -1242,16 +1262,20 @@ class StudioRequestHandler(SimpleHTTPRequestHandler):
       }
     }
 
-    function onTaskCompleted(data) {
+    function onTaskCompleted(data, hasWarnings = false) {
       resetGenerateBtn();
-      document.getElementById('taskStatusPill').className = 'text-xs px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30';
-      document.getElementById('taskStatusPill').textContent = 'Completed';
+      document.getElementById('taskStatusPill').className = hasWarnings
+        ? 'text-xs px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30'
+        : 'text-xs px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30';
+      document.getElementById('taskStatusPill').textContent = hasWarnings ? 'Completed with warnings' : 'Completed';
 
       const results = data.result_summary || {};
-      document.getElementById('resultSummaryText').textContent =
-        `Subcircuit: ${results.subckt_name || 'DUT'} | Verification Pass Rate: ${(results.pass_rate_percent || 0).toFixed(1)}% | Iterations: ${results.iterations_count || 1}`;
+      const baseSummary = `Subcircuit: ${results.subckt_name || 'DUT'} | Verification Pass Rate: ${(results.pass_rate_percent || 0).toFixed(1)}% | Iterations: ${results.iterations_count || 1}`;
+      document.getElementById('resultSummaryText').textContent = hasWarnings
+        ? `${baseSummary} | No valid netlist - run 2+ iterations or inspect the console.`
+        : baseSummary;
 
-      document.getElementById('netlistOutputPre').textContent = results.netlist_code || '* Netlist generated successfully.';
+      document.getElementById('netlistOutputPre').textContent = results.netlist_code || '* No valid SPICE netlist was generated in this run.';
       document.getElementById('openDashboardLink').href = data.dashboard_url || '#';
       document.getElementById('resultsCard').classList.remove('hidden');
     }

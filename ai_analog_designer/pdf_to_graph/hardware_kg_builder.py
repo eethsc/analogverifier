@@ -1,8 +1,9 @@
+import os
 import re
 import json
 import concurrent.futures as cf
 import networkx as nx
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, Callable, List, Optional
 from ..llm_client import LLMClient
 
 ROLES = ["POWER", "GROUND", "BIAS", "REFERENCE", "CONTROL", "ENABLE", "SIGNAL", "FEEDBACK", "OUTPUT", "NC"]
@@ -11,6 +12,23 @@ SPEC_CATEGORIES = ["ELECTRICAL", "ABS_MAX", "RECOMMENDED", "THERMAL", "ESD"]
 
 class HardwareKnowledgeGraph(nx.MultiDiGraph):
     pass
+
+
+class HKGExtractionError(RuntimeError):
+    """Raised when a datasheet's specification tables could not be extracted.
+
+    Proceeding with an empty specification set makes later verification look
+    successful while measuring nothing, so this is intentionally terminal.
+    """
+
+    def __init__(self, spec_pages: List[int], failed_pages: List[Dict[str, Any]]):
+        self.spec_pages = spec_pages
+        self.failed_pages = failed_pages
+        page_list = ", ".join(str(p.get("page", "?")) for p in failed_pages)
+        super().__init__(
+            "Specification-table extraction produced no usable rows "
+            f"for pages {spec_pages}; failed pages: {page_list or 'unknown'}"
+        )
 
 
 PINS_PROMPT = """You are extracting the PIN INTERFACE and PORT DEPENDENCIES of an IC from its datasheet.
@@ -81,12 +99,26 @@ class HardwareKnowledgeGraphBuilder:
     """Builds the Hardware Knowledge Graph (HKG) from a parsed datasheet using two parallel LLM extraction passes
     (interface/dependencies and specification tables), each with page-level provenance."""
 
-    def __init__(self, llm_client: Optional[LLMClient] = None, max_spec_pages: int = 10, parallel_spec_calls: int = 6):
+    def __init__(self, llm_client: Optional[LLMClient] = None, max_spec_pages: int = 10, parallel_spec_calls: int = 2):
         self.llm = llm_client or LLMClient()
         self.max_spec_pages = max_spec_pages
-        self.parallel_spec_calls = parallel_spec_calls
+        # Three in-flight calls (two table pages plus pin extraction) stay
+        # below the provider's four-request global cap.  The old value of six
+        # made seven pages contend at once, then all hit their TTFT deadlines.
+        configured_parallelism = int(os.environ.get("HKG_PARALLEL_SPEC_CALLS", parallel_spec_calls))
+        self.parallel_spec_calls = max(1, min(configured_parallelism, 3))
+        self.spec_page_retries = max(0, int(os.environ.get("HKG_SPEC_PAGE_RETRIES", "1")))
+        self.spec_max_tokens = max(512, int(os.environ.get("HKG_SPEC_MAX_TOKENS", "4000")))
+        self.retry_spec_max_tokens = max(
+            self.spec_max_tokens,
+            int(os.environ.get("HKG_RETRY_SPEC_MAX_TOKENS", "5000")),
+        )
 
-    def extract_raw(self, parsed_data: Dict[str, Any]) -> Dict[str, Any]:
+    def extract_raw(
+        self,
+        parsed_data: Dict[str, Any],
+        progress_callback: Optional[Callable[[int, int, int, Optional[str]], None]] = None,
+    ) -> Dict[str, Any]:
         from .pdf_parser import PDFDatasheetParser as P
         if "pages" not in parsed_data:  # legacy input
             return self._legacy_extract(parsed_data)
@@ -100,26 +132,79 @@ class HardwareKnowledgeGraphBuilder:
         # Spec tables are extracted ONE PAGE PER CALL in parallel: a single call over all spec pages emits
         # ~10k output tokens (100-170 s on NIM and frequently truncated); per-page calls emit 1-2k tokens each.
         sys_p = "You are a meticulous analog IC datasheet analyst. Extract only what the datasheet states. Never invent values."
-        spec_jobs = []
+        spec_jobs = {}
+        spec_rows: Dict[int, List[Dict[str, Any]]] = {}
+        failed_pages: List[Dict[str, Any]] = []
+
+        def extract_spec_page(page_num: int, *, retry: bool = False) -> List[Dict[str, Any]]:
+            text = P.page_tagged_text(parsed_data, [page_num], 14000, layout=True)
+            tag = f"hkg_specs_retry_p{page_num}" if retry else f"hkg_specs_p{page_num}"
+            rows = self.llm.complete_json(
+                SPECS_PROMPT.format(text=text, ic=ic_guess),
+                system_prompt=sys_p,
+                max_tokens=self.retry_spec_max_tokens if retry else self.spec_max_tokens,
+                tag=tag,
+                timeout_profile="extraction",
+            ).get("electrical_parameters") or []
+            rows = [row for row in rows if isinstance(row, dict)]
+            if not rows:
+                raise HKGExtractionError([page_num], [{"page": page_num, "error": "model returned zero specification rows"}])
+            for row in rows:
+                if not row.get("page"):
+                    row["page"] = page_num
+            return rows
+
         with cf.ThreadPoolExecutor(max_workers=1 + self.parallel_spec_calls) as ex:
             f_pins = ex.submit(self.llm.complete_json, PINS_PROMPT.format(text=pin_text, roles="|".join(ROLES)),
                                system_prompt=sys_p, max_tokens=6000, tag="hkg_pins")
             for pn in spec_pages:
-                txt = P.page_tagged_text(parsed_data, [pn], 14000, layout=True)
-                spec_jobs.append((pn, ex.submit(self.llm.complete_json, SPECS_PROMPT.format(text=txt, ic=ic_guess),
-                                                system_prompt=sys_p, max_tokens=6000, tag=f"hkg_specs_p{pn}")))
-            pins_json = f_pins.result()
-            specs_json = {"electrical_parameters": []}
-            failed_pages = []
-            for pn, f in spec_jobs:
+                spec_jobs[ex.submit(extract_spec_page, pn)] = pn
+            completed_pages = 0
+            for f in cf.as_completed(spec_jobs):
+                pn = spec_jobs[f]
                 try:
-                    rows = f.result().get("electrical_parameters") or []
-                    for r in rows:
-                        if isinstance(r, dict) and not r.get("page"):
-                            r["page"] = pn
-                    specs_json["electrical_parameters"].extend(rows)
+                    spec_rows[pn] = f.result()
+                    completed_pages += 1
+                    if progress_callback:
+                        progress_callback(completed_pages, len(spec_pages), pn, None)
                 except Exception as e:
-                    failed_pages.append({"page": pn, "error": str(e)[:200]})
+                    completed_pages += 1
+                    failure = {"page": pn, "error": str(e)[:300], "attempts": 1}
+                    failed_pages.append(failure)
+                    if progress_callback:
+                        progress_callback(completed_pages, len(spec_pages), pn, failure["error"])
+            pins_json = f_pins.result()
+
+        # A first-pass timeout is usually transient provider congestion.  Retry
+        # only the affected page, serially, on the frontier tier.  This avoids
+        # recreating the original six-way thundering herd and preserves the
+        # fast/capable path for normal pages.
+        unresolved = list(failed_pages)
+        for retry_index in range(1, self.spec_page_retries + 1):
+            if not unresolved:
+                break
+            next_unresolved = []
+            for failure in unresolved:
+                pn = int(failure["page"])
+                try:
+                    spec_rows[pn] = extract_spec_page(pn, retry=True)
+                    failed_pages.remove(failure)
+                    if progress_callback:
+                        progress_callback(len(spec_rows), len(spec_pages), pn, None)
+                except Exception as e:
+                    failure["attempts"] = retry_index + 1
+                    failure["error"] = str(e)[:300]
+                    next_unresolved.append(failure)
+                    if progress_callback:
+                        progress_callback(len(spec_rows), len(spec_pages), pn, failure["error"])
+            unresolved = next_unresolved
+
+        specs_json = {"electrical_parameters": []}
+        for pn in sorted(spec_rows):
+            specs_json["electrical_parameters"].extend(spec_rows[pn])
+
+        if spec_pages and not specs_json["electrical_parameters"]:
+            raise HKGExtractionError(spec_pages, failed_pages)
 
         data = {
             "ic_device": pins_json.get("ic_device") or {"name": ic_guess, "category": "ANALOG"},
@@ -146,8 +231,12 @@ class HardwareKnowledgeGraphBuilder:
             data["electrical_parameters"].append(p)
         return data
 
-    def build_kg_from_parsed_pdf(self, parsed_data: Dict[str, Any]) -> nx.MultiDiGraph:
-        data = self.extract_raw(parsed_data)
+    def build_kg_from_parsed_pdf(
+        self,
+        parsed_data: Dict[str, Any],
+        progress_callback: Optional[Callable[[int, int, int, Optional[str]], None]] = None,
+    ) -> nx.MultiDiGraph:
+        data = self.extract_raw(parsed_data, progress_callback=progress_callback)
         G = self._json_to_networkx_graph(data)
         from .pdf_parser import PDFDatasheetParser
         G.graph["parsed_pages"] = PDFDatasheetParser.audit_pages(parsed_data)

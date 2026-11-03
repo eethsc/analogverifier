@@ -33,14 +33,23 @@ class Harness2CircuitArchitect:
         nim_client: Optional[LLMClient] = None,
         openrouter_client: Optional[LLMClient] = None,
         library_root: str = "harness2_library",
-        improver_provider: str = "nim",
-        synthesizer_provider: str = "openrouter"
+        improver_provider: Optional[str] = None,
+        synthesizer_provider: Optional[str] = None,
     ):
-        # OpenRouter & NVIDIA NIM API clients
-        self.nim_client = nim_client or LLMClient(provider="nim")
-        self.openrouter_client = openrouter_client or (
-            llm_client if (llm_client and getattr(llm_client, "provider", "") == "openrouter") else LLMClient(provider="openrouter")
+        # Preserve the application's selected provider.  The old defaults could
+        # silently route synthesis to OpenRouter even when the web server was
+        # configured solely with an NVIDIA NIM key.
+        selected_provider = getattr(llm_client, "provider", "") or os.environ.get("LLM_PROVIDER", "nim")
+        self.nim_client = nim_client or (
+            llm_client if selected_provider == "nim" else LLMClient(provider="nim")
         )
+        self.openrouter_client = openrouter_client or (
+            llm_client if selected_provider == "openrouter" else LLMClient(provider="openrouter")
+        )
+        improver_provider = (improver_provider or os.environ.get("HARNESS2_IMPROVER_PROVIDER") or selected_provider).lower()
+        synthesizer_provider = (synthesizer_provider or os.environ.get("HARNESS2_SYNTHESIZER_PROVIDER") or selected_provider).lower()
+        if improver_provider not in {"nim", "openrouter"} or synthesizer_provider not in {"nim", "openrouter"}:
+            raise ValueError("Harness² providers must be 'nim' or 'openrouter'")
 
         self.library = HarnessLibrary(root_dir=library_root)
         self.proposer = Harness2Proposer(

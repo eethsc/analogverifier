@@ -24,6 +24,157 @@
 
 ---
 
+## 🔧 2026-11 신뢰성 업데이트 — 웹 실행, 모델 스케줄링, 데이터시트 사양 추출
+
+> 이 절은 Web Studio에서 발견된 실제 실패 경로를 기준으로 추가된 변경 사항과 검증 범위를 기록한다. “작업이 종료됨”과 “회로가 사양을 충족함”은 의도적으로 같은 의미로 취급하지 않는다.
+
+### 문제 재현과 원인
+
+Web Studio에서 TI LM393 데이터시트를 업로드하여 실행했을 때, PDF 레이아웃 파싱은 완료됐지만 스펙 테이블 페이지의 LLM 요청이 시간 초과되었다. 과거 구현은 이 실패를 `failed_spec_pages`에만 남기고 빈 `electrical_parameters`를 다음 단계로 전달했다. 그 결과 다음의 잘못된 흐름이 가능했다.
+
+```mermaid
+flowchart LR
+    A[PDF layout parsing succeeds] --> B[Several spec-page LLM requests time out]
+    B --> C[Old behavior: empty specs continue]
+    C --> D[Hermes receives 0 specifications]
+    D --> E[0% verification / misleading completion]
+
+    B --> F[New behavior: page-scoped recovery]
+    F --> G{Any usable spec rows?}
+    G -->|yes| H[Build HKG and continue]
+    G -->|no| I[Raise HKGExtractionError and mark task failed]
+```
+
+직접적인 병목은 두 가지였다.
+
+1. 기본 `parallel_spec_calls=6`과 핀 추출 요청 1개가 동시에 시작되어, NVIDIA NIM의 프로세스 전역 동시 요청 상한(`LLM_MAX_CONCURRENCY`, 기본 4)을 초과했다. 대기 중인 페이지가 TTFT/소켓 시간 제한에 걸리며 실패가 한꺼번에 발생할 수 있었다.
+2. 6,000 출력 토큰까지 허용하는 표 테이블 추출에 일반 대화용 모델별 시간 제한을 적용했다. 긴 표 페이지는 정상적으로 스트리밍을 시작했더라도 총 제한 내에 끝나지 못할 수 있었다.
+
+### 변경된 Phase 1 데이터 흐름
+
+`HardwareKnowledgeGraphBuilder`는 이제 사양 테이블을 다음과 같이 처리한다.
+
+1. 핀 추출 1개와 사양 페이지 최대 2개만 동시에 실행한다. `HKG_PARALLEL_SPEC_CALLS`는 안전을 위해 1~3 범위로 제한된다.
+2. 각 일반 사양 페이지는 `fast → capable` 모델 순서로 JSON 추출을 시도한다.
+3. 두 모델이 모두 전송 오류·시간 초과·잘못된 JSON·빈 행 결과를 내면, **실패한 그 페이지에 한해서만** frontier 모델로 직렬 재시도한다.
+4. 페이지별 성공/실패/재시도 상태를 Web Studio Phase 1 로그에 표시한다.
+5. 선택된 스펙 페이지가 있는데도 사양 행이 하나도 없으면 `HKGExtractionError`를 발생시켜 작업을 실패시킨다. 빈 사양 HKG는 PDG, Hermes, 검증으로 전달되지 않는다.
+
+이 설계는 모든 데이터시트 호출에 큰 모델을 쓰는 방식이 아니다. 정상 페이지는 작은 모델 두 단계에서 끝나고, frontier는 장애가 난 한 페이지를 회복하는 최후 수단이다.
+
+### 적응형 LLM 스케줄러
+
+`ai_analog_designer/llm_client.py`는 `LLM_SCHEDULER=adaptive`를 기본값으로 사용한다. `LLM_MODEL` 또는 단계별 명시 모델을 설정하지 않았을 때만 아래 경로가 적용된다.
+
+| 작업 태그 | 1차 경로 | 장애/후속 경로 | 의도 |
+|---|---|---|---|
+| `hkg_specs_pN` | fast → capable | 페이지 실패 시 `hkg_specs_retry_pN`: frontier | 비용을 낮추되 빈 HKG를 금지 |
+| `hkg_pins` | capable → frontier → fast | 순차 폴백 | 핀/포트 인터페이스 정확도 우선 |
+| `hermes_turn_1..2` | capable → fast → frontier | 전체 경로 폴백 | 초반 합성의 가용성 확보 |
+| `hermes_turn_3+` | frontier → capable → fast | 전체 경로 폴백 | 반복 수리 단계의 난도 상승 반영 |
+| `harness2_synth`, `synth` | capable → fast | — | 구조화 합성 응답 |
+| `dyn_tb`, `tb`, `verifier_*` | fast → capable | — | 짧은 테스트벤치/판정 작업 |
+
+기본 NVIDIA NIM 티어는 다음과 같다.
+
+| 티어 | 기본 모델 | 역할 |
+|---|---|---|
+| fast | `deepseek-ai/deepseek-v4.1-flash` | 표 행·테스트벤치·단순 구조화 추출 |
+| capable | `z-ai/glm-5.3-flash` | 핀 인터페이스 및 일반 합성 |
+| frontier | `nvidia/nemotron-3-ultra-550b-a55b` | 실패한 사양 페이지와 후기 Hermes 수리 |
+
+명시적 운영자 선택은 자동 라우팅보다 우선한다. `LLM_MODEL`은 모든 작업의 기본 모델을 고정하며, `LLM_EXTRACT_MODEL`, `LLM_HERMES_MODEL`, `LLM_SYNTH_MODEL`, `LLM_TB_MODEL`은 해당 단계만 고정한다. 기존 동작이 필요하면 `LLM_SCHEDULER=legacy`를 사용할 수 있다.
+
+### 시간 제한, 재시도 및 과부하 제어
+
+모든 스트리밍 호출은 첫 바이트 대기(TTFT)와 전체 경과 시간 제한을 모두 가진다. 일반 에이전트 턴의 기본 시간 제한은 작게 유지하고, 데이터시트 테이블 추출에만 별도 프로필을 적용한다.
+
+| 프로필/티어 | 전체 제한 기본값 | TTFT 제한 기본값 | 적용 범위 |
+|---|---:|---:|---|
+| 일반 fast | 45초 | 20초 | 짧은 생성·검증 |
+| 일반 capable | 75초 | 35초 | 일반 Hermes/합성 |
+| 일반 frontier | 120초 | 60초 | 후기 수리 |
+| 추출 fast | 55초 | 30초 | `hkg_specs_pN` |
+| 추출 capable | 110초 | 60초 | `hkg_specs_pN` |
+| 추출 frontier | 210초 | 90초 | `hkg_specs_retry_pN` |
+
+- `LLM_MAX_CONCURRENCY`는 프로세스 전체 요청 수를 제한한다(기본 4).
+- 타임아웃은 같은 모델을 무한 재시도하지 않는다. 즉시 다음 티어로 이동한다.
+- `complete_json()`은 전송 실패뿐 아니라 JSON 파싱 실패도 다음 티어로 넘긴다.
+- 빈 `electrical_parameters` 응답은 성공으로 취급하지 않고 페이지 재시도 대상이 된다.
+- `LLM_TIMEOUT_S`, `LLM_TTFT_TIMEOUT_S`는 각 프로필의 상한이다. 모델별/추출별 값도 이 상한을 넘지 않는다.
+
+### Web Studio 사용자 경험 및 상태 의미
+
+- PDF 파서가 페이지를 처리할 때마다 `Phase 1: PDF Layout Parsing` 진행 로그를 전송한다. 레이아웃 파서 오류가 나도 로컬 텍스트 폴백을 쓴 경우를 로그에 표시한다.
+- HKG 테이블 추출에는 `Phase 1: Specification Extraction` 로그를 추가했다. 페이지 번호, 완료 수, 시간 초과 후 복구 라우팅 여부를 볼 수 있다.
+- LLM 모델 표시 API(`/api/llm_config`)는 현재 provider와 실제 라우팅 티어를 반환한다. UI는 단일 “기본 모델”을 모든 작업에 사용한다는 인상을 주지 않는다.
+- 1회 반복은 탐색용(`Discovery Only`)이며 유효한 `.subckt`가 없으면 `completed_with_warnings`로 표시한다. 넷리스트 존재 여부는 SPICE 품질 또는 사양 통과의 증명이 아니다.
+
+### Hermes/Harness² 안정화 변경
+
+| 변경 | 위치 | 효과 |
+|---|---|---|
+| 시스템 프롬프트의 JSON 예제 중괄호 이스케이프 | `hermes_core/hermes_agent.py` | Python f-string의 `Invalid format specifier` 런타임 오류 제거 |
+| Hermes에 클라이언트 기본 모델을 명시 모델로 고정하지 않음 | `hermes_core/hermes_agent.py` | 턴 태그 기반 스케줄러가 실제로 작동 |
+| Hermes 초기 턴에도 frontier 최후 폴백 제공 | `llm_client.py` | 작은 모델의 일시 장애가 전체 합성을 즉시 중단시키지 않음 |
+| Harness²가 OpenRouter를 강제하지 않고 앱 LLM provider 재사용 | `circuit_synthesis/harness2/harness2_architect.py` | NVIDIA NIM 실행 시 다른 provider의 인증 오류 방지 |
+
+### 운영 설정 예시
+
+API 키는 커밋하지 않는다. 다음은 `.env` 또는 서버를 시작하는 프로세스의 환경 변수에 설정할 수 있는 비밀이 아닌 운영 항목이다.
+
+```ini
+# 모델 라우팅
+LLM_SCHEDULER=adaptive
+LLM_FAST_MODEL=deepseek-ai/deepseek-v4.1-flash
+LLM_CAPABLE_MODEL=z-ai/glm-5.3-flash
+LLM_FRONTIER_MODEL=nvidia/nemotron-3-ultra-550b-a55b
+LLM_HERMES_ESCALATE_AFTER=3
+
+# 제공자 과부하 방지 및 HKG 복구
+LLM_MAX_CONCURRENCY=4
+HKG_PARALLEL_SPEC_CALLS=2
+HKG_SPEC_PAGE_RETRIES=1
+HKG_SPEC_MAX_TOKENS=4000
+HKG_RETRY_SPEC_MAX_TOKENS=5000
+
+# 데이터시트 추출 전용 시간 제한
+LLM_EXTRACT_FAST_TIMEOUT_S=55
+LLM_EXTRACT_FAST_TTFT_TIMEOUT_S=30
+LLM_EXTRACT_CAPABLE_TIMEOUT_S=110
+LLM_EXTRACT_CAPABLE_TTFT_TIMEOUT_S=60
+LLM_EXTRACT_FRONTIER_TIMEOUT_S=210
+LLM_EXTRACT_FRONTIER_TTFT_TIMEOUT_S=90
+```
+
+### 검증 기록과 범위
+
+이번 변경은 오프라인 단위 테스트만 실행한 것이 아니다. `tests/test_hkg_network_timeout_integration.py`는 실제 로컬 SSE HTTP 서버와 production `LLMClient`를 사용한다. fast와 capable 요청은 의도적으로 첫 바이트를 보내지 않아 **실제 `urllib` 소켓 타임아웃**을 발생시키고, 그 뒤 frontier 재시도로 사양 행을 복구한다.
+
+최근 실행 결과:
+
+```text
+hkg_specs_p2 / fast-model      -> timeout
+hkg_specs_p2 / capable-model   -> timeout
+hkg_specs_retry_p2 / frontier-model -> ok
+electrical_parameters          -> VOS 1 row
+```
+
+다음 명령으로 스케줄러·빈 사양 차단·실제 HTTP 타임아웃 복구를 함께 검증했다.
+
+```powershell
+$env:PYTHONPATH = (Get-Location).Path
+uv run --with pytest --with "pymupdf>=1.24" --with "networkx>=3.0" --with "sympy>=1.12" --with "numpy>=1.26" `
+  pytest tests/test_llm_scheduling.py tests/test_hkg_timeout_recovery.py tests/test_hkg_network_timeout_integration.py -q
+```
+
+결과: **13 passed**.
+
+이 기록은 로컬 SSE 통합 검증을 의미한다. 수정 후의 NVIDIA NIM 실서비스 키를 사용한 LM393 업로드 → `spec_count > 0` 확인 → 15회 Hermes 반복 브라우저 E2E는 별도 실행 환경에서 다시 수행해야 하며, 그 실행 없이는 회로 품질 또는 실서비스 성공을 주장하지 않는다.
+
+---
+
 ## 🛡️ PDG 기반 4단계 인과 검증 파이프라인 (PDG Staged Causal Verification)
 
 ### 1. 왜 기존 검증기에서 '동작 불능 회로'가 25%~51.5% 통과율을 기록했는가? (Forensic Audit)
@@ -258,6 +409,23 @@ pip install -r requirements.txt playwright
   NVIDIA_API_KEY="your_nvidia_nim_api_key"
   TAVILY_API_KEY="your_tavily_api_key"
   EXA_API_KEY="your_exa_api_key"
+
+  # Optional: the default adaptive scheduler uses fast models for table
+  # extraction and reserves the frontier model for late Hermes repairs.
+  # LLM_SCHEDULER=adaptive
+  # LLM_FAST_MODEL=deepseek-ai/deepseek-v4.1-flash
+  # LLM_CAPABLE_MODEL=z-ai/glm-5.3-flash
+  # LLM_FRONTIER_MODEL=nvidia/nemotron-3-ultra-550b-a55b
+  # LLM_HERMES_ESCALATE_AFTER=3
+
+  # Datasheet table extraction is deliberately conservative: two primary
+  # pages run in parallel, then only a timed-out page is retried on frontier.
+  # These are optional reliability controls, not required API keys.
+  # HKG_PARALLEL_SPEC_CALLS=2
+  # HKG_SPEC_PAGE_RETRIES=1
+  # LLM_EXTRACT_FAST_TIMEOUT_S=55
+  # LLM_EXTRACT_CAPABLE_TIMEOUT_S=110
+  # LLM_EXTRACT_FRONTIER_TIMEOUT_S=210
   ```
 - **인터랙티브 Web Studio 실행**:
   ```powershell

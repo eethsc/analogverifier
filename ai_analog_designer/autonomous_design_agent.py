@@ -256,7 +256,20 @@ Return ONLY valid JSON.
         if datasheet_pdf_path and os.path.exists(datasheet_pdf_path):
             logger.info(f"Phase 1: Parsing PDF layout, tables, and text sections from: {datasheet_pdf_path}")
             self.pdf_parser.max_pages = max_pages
-            parsed_doc = self.pdf_parser.parse_pdf(datasheet_pdf_path)
+            def on_pdf_page_parsed(done: int, total: int, page_num: int, page_error: Optional[str]):
+                if not progress_callback:
+                    return
+                suffix = " (using local text fallback)" if page_error else ""
+                progress_callback(
+                    1,
+                    "Phase 1: PDF Layout Parsing",
+                    f"Parsed datasheet page {done}/{total} (page {page_num}){suffix}.",
+                )
+
+            parsed_doc = self.pdf_parser.parse_pdf(
+                datasheet_pdf_path,
+                progress_callback=on_pdf_page_parsed,
+            )
             
             stem = os.path.splitext(os.path.basename(datasheet_pdf_path))[0].lower()
             auto_cache = os.path.abspath(os.path.join("output_interactive", ".hkg_cache", f"{stem}_hkg.json"))
@@ -271,7 +284,26 @@ Return ONLY valid JSON.
                 hkg.graph["parsed_pages"] = PDFDatasheetParser.audit_pages(parsed_doc)
             else:
                 logger.info("Constructing Hardware Knowledge Graph (HKG) from parsed document...")
-                hkg = self.kg_builder.build_kg_from_parsed_pdf(parsed_doc)
+                def on_spec_page_extracted(done: int, total: int, page_num: int, page_error: Optional[str]):
+                    if not progress_callback:
+                        return
+                    if page_error:
+                        progress_callback(
+                            1,
+                            "Phase 1: Specification Extraction",
+                            f"Specification page {page_num} timed out; retrying that page with recovery routing ({done}/{total}).",
+                        )
+                    else:
+                        progress_callback(
+                            1,
+                            "Phase 1: Specification Extraction",
+                            f"Extracted specification table page {page_num} ({done}/{total}).",
+                        )
+
+                hkg = self.kg_builder.build_kg_from_parsed_pdf(
+                    parsed_doc,
+                    progress_callback=on_spec_page_extracted,
+                )
             raw_extraction = hkg.graph.get("raw_extraction", {})
         elif user_prompt:
             logger.info("Phase 1: No PDF provided; extracting specifications directly from natural language prompt...")

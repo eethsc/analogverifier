@@ -56,7 +56,11 @@ class HermesAgent:
         self.workspace_dir = os.path.abspath(workspace_dir)
         self.tools = tools
         self.llm_client = llm_client or LLMClient()
-        self.model = model or getattr(self.llm_client, "default_model", "openai/gpt-6-luna")
+        # Keep None when no explicit model was requested so LLMClient can
+        # select a tier per Hermes turn (and fall back on timeout).  Resolving
+        # this to default_model here would turn it into an explicit override
+        # and silently bypass the adaptive scheduler.
+        self.model = model
         self.temperature = temperature
 
         # File paths inside Hermes workspace
@@ -152,7 +156,7 @@ class HermesAgent:
 === TOOL CALLING PROTOCOL ===
 You have access to specialized tools. When you need to inspect blueprints, validate syntax, execute simulation, or update memory, invoke tools using the Hermes `<tool_call>` format:
 <tool_call>
-{"name": "<tool_name>", "arguments": {...}}
+{{"name": "<tool_name>", "arguments": {{...}}}}
 </tool_call>
 IMPORTANT: You MUST write the closing `</tool_call>` tag immediately after the JSON!
 CRITICAL: Execute ONLY ONE or TWO tool calls per turn. NEVER simulate future turns or write monologue text like '[ASSISTANCE]:' or '[USER]:'. Wait for tool results before proceeding.

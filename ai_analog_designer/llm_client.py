@@ -7,6 +7,7 @@ Supported providers (select with env LLM_PROVIDER):
 
 Features:
   - Streaming with a hard wall-clock timeout (NIM sometimes stalls for minutes)
+  - Task-aware fast-first routing with guarded escalation for hard synthesis turns
   - Automatic model fallback chain on timeout / 5xx / 429
   - Per-call latency telemetry (TTFT, total, tokens) collected in LLMClient.call_log
 """
@@ -61,10 +62,14 @@ PROVIDERS = {
     "nim": {
         "base_url": lambda: os.environ.get("NIM_BASE_URL", "https://integrate.api.nvidia.com/v1").rstrip("/") + "/chat/completions",
         "key_env": "NVIDIA_API_KEY",
-        # Chosen from tools/nim_latency_bench.py results (see benchmark_results/NIM_LATENCY_BENCH.md)
+        # Legacy default is retained for LLM_SCHEDULER=legacy.  The adaptive
+        # scheduler below never uses this 550B model for routine extraction.
         "default_model": lambda: os.environ.get("LLM_MODEL", "nvidia/nemotron-3-ultra-550b-a55b"),
         "fallback_models": lambda: [m for m in os.environ.get(
             "LLM_FALLBACK_MODELS", "deepseek-ai/deepseek-v4.1-flash,z-ai/glm-5.3-flash").split(",") if m],
+        "fast_model": lambda: os.environ.get("LLM_FAST_MODEL", "deepseek-ai/deepseek-v4.1-flash"),
+        "capable_model": lambda: os.environ.get("LLM_CAPABLE_MODEL", "z-ai/glm-5.3-flash"),
+        "frontier_model": lambda: os.environ.get("LLM_FRONTIER_MODEL", "nvidia/nemotron-3-ultra-550b-a55b"),
         "supports_json_mode": True,
     },
     "openrouter": {
@@ -73,6 +78,9 @@ PROVIDERS = {
         "default_model": lambda: os.environ.get("LLM_MODEL", "anthropic/claude-haiku-5.5"),
         "fallback_models": lambda: [m for m in os.environ.get(
             "LLM_FALLBACK_MODELS", "openai/gpt-6-luna,deepseek/deepseek-v4.1-flash").split(",") if m],
+        "fast_model": lambda: os.environ.get("LLM_FAST_MODEL", "deepseek/deepseek-v4.1-flash"),
+        "capable_model": lambda: os.environ.get("LLM_CAPABLE_MODEL", "anthropic/claude-haiku-5.5"),
+        "frontier_model": lambda: os.environ.get("LLM_FRONTIER_MODEL", "openai/gpt-6-luna"),
         "supports_json_mode": True,
     },
 }
@@ -122,8 +130,17 @@ class LLMBudgetExceeded(Exception):
     pass
 
 
-# Per-task model routing: tag prefix -> env var holding the model id (falls back to LLM_MODEL / provider default)
-TASK_MODEL_ENV = [("hkg", "LLM_EXTRACT_MODEL"), ("synth", "LLM_SYNTH_MODEL"), ("tb", "LLM_TB_MODEL")]
+# Per-task overrides always take precedence over the scheduler.  They are
+# intentionally granular so an operator can tune one expensive stage without
+# accidentally moving every other call to the same model.
+TASK_MODEL_ENV = [
+    ("hkg", "LLM_EXTRACT_MODEL"),
+    ("hermes", "LLM_HERMES_MODEL"),
+    ("harness2_synth", "LLM_SYNTH_MODEL"),
+    ("synth", "LLM_SYNTH_MODEL"),
+    ("dyn_tb", "LLM_TB_MODEL"),
+    ("tb", "LLM_TB_MODEL"),
+]
 
 _COST_LOCK = threading.Lock()
 _SPENT_USD = [0.0]
@@ -151,7 +168,7 @@ def _acquire_slot(min_interval_s: float):
 
 
 class LLMClient:
-    """OpenAI-compatible chat completion client with streaming timeouts and model fallback."""
+    """OpenAI-compatible chat client with task-aware routing and bounded fallback."""
 
     def __init__(
         self,
@@ -167,17 +184,167 @@ class LLMClient:
         cfg = PROVIDERS[self.provider]
         self.api_key = api_key or os.environ.get(cfg["key_env"], "")
         self.base_url = base_url or cfg["base_url"]()
-        self.default_model = default_model or cfg["default_model"]()
-        self.fallback_models = [m for m in cfg["fallback_models"]() if m != self.default_model]
+        self.scheduler_mode = os.environ.get("LLM_SCHEDULER", "adaptive").strip().lower()
+        if self.scheduler_mode not in {"adaptive", "legacy"}:
+            raise ValueError("LLM_SCHEDULER must be 'adaptive' or 'legacy'")
+
+        # LLM_MODEL/default_model is an explicit operator choice and therefore
+        # overrides automatic routing.  Otherwise we expose the capable tier as
+        # the nominal model while each task receives its own route below.
+        self._explicit_default_model = default_model or os.environ.get("LLM_MODEL")
+        self.legacy_default_model = cfg["default_model"]()
+        self.model_tiers = {
+            "fast": cfg["fast_model"](),
+            "capable": cfg["capable_model"](),
+            "frontier": cfg["frontier_model"](),
+        }
+        self.default_model = self._explicit_default_model or self.model_tiers["capable"]
+        self._legacy_fallback_models = cfg["fallback_models"]()
+        self._explicit_fallback_models = [
+            m.strip() for m in os.environ.get("LLM_FALLBACK_MODELS", "").split(",") if m.strip()
+        ]
+        self.fallback_models = self._dedupe_models([
+            self.model_tiers["fast"], self.model_tiers["capable"], self.model_tiers["frontier"]
+        ], exclude=self.default_model)
         self.supports_json_mode = cfg["supports_json_mode"]
         self.request_timeout = float(request_timeout or os.environ.get("LLM_TIMEOUT_S", 240))
         self.first_token_timeout = float(first_token_timeout or os.environ.get("LLM_TTFT_TIMEOUT_S", 90))
+        self._tier_request_timeouts = {
+            "fast": float(os.environ.get("LLM_FAST_TIMEOUT_S", 45)),
+            "capable": float(os.environ.get("LLM_CAPABLE_TIMEOUT_S", 75)),
+            "frontier": float(os.environ.get("LLM_FRONTIER_TIMEOUT_S", 120)),
+        }
+        self._tier_ttft_timeouts = {
+            "fast": float(os.environ.get("LLM_FAST_TTFT_TIMEOUT_S", 20)),
+            "capable": float(os.environ.get("LLM_CAPABLE_TTFT_TIMEOUT_S", 35)),
+            "frontier": float(os.environ.get("LLM_FRONTIER_TTFT_TIMEOUT_S", 60)),
+        }
+        # Datasheet table extraction is a bounded, high-value batch operation.
+        # It needs more room than a chat/tool turn (a page can contain hundreds
+        # of table cells), but only the HKG path receives this longer budget.
+        # Keeping this separate prevents a slow extraction request from making
+        # every Hermes turn wait several minutes.
+        self._extraction_request_timeouts = {
+            "fast": float(os.environ.get("LLM_EXTRACT_FAST_TIMEOUT_S", 55)),
+            "capable": float(os.environ.get("LLM_EXTRACT_CAPABLE_TIMEOUT_S", 110)),
+            "frontier": float(os.environ.get("LLM_EXTRACT_FRONTIER_TIMEOUT_S", 210)),
+        }
+        self._extraction_ttft_timeouts = {
+            "fast": float(os.environ.get("LLM_EXTRACT_FAST_TTFT_TIMEOUT_S", 30)),
+            "capable": float(os.environ.get("LLM_EXTRACT_CAPABLE_TTFT_TIMEOUT_S", 60)),
+            "frontier": float(os.environ.get("LLM_EXTRACT_FRONTIER_TTFT_TIMEOUT_S", 90)),
+        }
+        self.hermes_escalate_after = max(1, int(os.environ.get("LLM_HERMES_ESCALATE_AFTER", "3")))
         self.min_interval_s = float(os.environ.get("LLM_MIN_INTERVAL_S", 0.5))
         self.call_log: List[Dict[str, Any]] = []
         self._lock = threading.Lock()
 
     # ------------------------------------------------------------------
-    def _stream_call(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    @staticmethod
+    def _dedupe_models(models: List[str], exclude: Optional[str] = None) -> List[str]:
+        result: List[str] = []
+        for model in models:
+            model = (model or "").strip()
+            if model and model != exclude and model not in result:
+                result.append(model)
+        return result
+
+    def _task_override(self, tag: str) -> Optional[str]:
+        for prefix, env in TASK_MODEL_ENV:
+            if tag.startswith(prefix) and os.environ.get(env):
+                return os.environ[env]
+        return None
+
+    def _tier_for_model(self, model: str) -> str:
+        for tier, tier_model in self.model_tiers.items():
+            if model == tier_model:
+                return tier
+        return "capable"
+
+    def _tiers_for_tag(self, tag: str) -> List[str]:
+        """Return the smallest model sequence that fits this workflow step.
+
+        Structured per-page extraction and generated test benches are bounded
+        tasks, so they begin on the fast tier.  A full circuit netlist is the
+        only task that can earn the frontier model, and only after earlier
+        Hermes repair turns failed to converge.
+        """
+        tag = tag or ""
+        # Retry is deliberately a single frontier attempt.  Routine pages
+        # retain the economical fast/capable path; only a page that exhausted
+        # both gets the larger availability/quality fallback.
+        if tag.startswith("hkg_specs_retry"):
+            return ["frontier"]
+        if tag.startswith("hkg_specs"):
+            return ["fast", "capable"]
+        if tag.startswith("hkg_pins"):
+            return ["capable", "frontier", "fast"]
+        if tag.startswith("hkg") or tag == "chat":
+            return ["fast", "capable"]
+        if tag.startswith(("dyn_tb", "tb", "verifier_", "harness2_propose")):
+            return ["fast", "capable"]
+        if tag.startswith("hermes_turn"):
+            match = re.search(r"(\d+)$", tag)
+            turn = int(match.group(1)) if match else 1
+            if turn >= self.hermes_escalate_after:
+                return ["frontier", "capable", "fast"]
+            # Early turns remain fast-first, but synthesis must not terminate
+            # merely because both smaller remote models are temporarily slow.
+            # The frontier tier is a last-resort availability fallback here,
+            # not the default model.
+            return ["capable", "fast", "frontier"]
+        if tag.startswith(("harness2_synth", "synth")):
+            return ["capable", "fast"]
+        return ["fast", "capable"]
+
+    def model_chain_for(self, tag: str = "", model: Optional[str] = None) -> List[str]:
+        """Resolve a deterministic, de-duplicated model chain for one call."""
+        explicit = model or self._task_override(tag) or self._explicit_default_model
+        if explicit:
+            return self._dedupe_models([explicit] + self._explicit_fallback_models)
+        if self.scheduler_mode == "legacy":
+            return self._dedupe_models([self.legacy_default_model] + self._legacy_fallback_models)
+        return self._dedupe_models(
+            [self.model_tiers[tier] for tier in self._tiers_for_tag(tag)] + self._explicit_fallback_models
+        )
+
+    def routing_config(self) -> Dict[str, Any]:
+        """Safe, display-ready routing metadata for the Studio API."""
+        return {
+            "scheduler": self.scheduler_mode,
+            "tiers": dict(self.model_tiers),
+            "hermes_escalate_after": self.hermes_escalate_after,
+            "routes": {
+                "extract_specs": self.model_chain_for("hkg_specs_p1"),
+                "extract_specs_recovery": self.model_chain_for("hkg_specs_retry_p1"),
+                "extract_pins": self.model_chain_for("hkg_pins"),
+                "hermes_initial": self.model_chain_for("hermes_turn_1"),
+                "hermes_repair": self.model_chain_for(f"hermes_turn_{self.hermes_escalate_after}"),
+                "testbench": self.model_chain_for("dyn_tb"),
+            },
+        }
+
+    def _timeouts_for_model(self, model: str, timeout_profile: str = "default") -> tuple[float, float]:
+        tier = self._tier_for_model(model)
+        if timeout_profile == "extraction":
+            request_limits = self._extraction_request_timeouts
+            ttft_limits = self._extraction_ttft_timeouts
+        elif timeout_profile == "default":
+            request_limits = self._tier_request_timeouts
+            ttft_limits = self._tier_ttft_timeouts
+        else:
+            raise ValueError(f"Unknown LLM timeout profile: {timeout_profile}")
+        return (
+            min(self.request_timeout, request_limits[tier]),
+            min(self.first_token_timeout, ttft_limits[tier]),
+        )
+
+    def _stream_call(
+        self,
+        payload: Dict[str, Any],
+        request_timeout: Optional[float] = None,
+        first_token_timeout: Optional[float] = None,
+    ) -> Dict[str, Any]:
         payload = dict(payload, stream=True)
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -194,11 +361,13 @@ class LLMClient:
         usage = None
         finish_reason = None
         # socket timeout bounds the wait for each chunk (incl. first token)
-        with urllib.request.urlopen(req, timeout=self.first_token_timeout) as resp:
+        request_timeout = request_timeout or self.request_timeout
+        first_token_timeout = first_token_timeout or self.first_token_timeout
+        with urllib.request.urlopen(req, timeout=first_token_timeout) as resp:
             for raw in resp:
                 now = time.perf_counter()
-                if now - t0 > self.request_timeout:
-                    raise LLMTimeout(f"total time exceeded {self.request_timeout:.0f}s")
+                if now - t0 > request_timeout:
+                    raise LLMTimeout(f"total time exceeded {request_timeout:.0f}s")
                 line = raw.decode("utf-8", "ignore").strip()
                 if not line.startswith("data:"):
                     continue
@@ -243,6 +412,8 @@ class LLMClient:
         retries: int = 3,
         tag: str = "",
         messages: Optional[List[Dict[str, Any]]] = None,
+        model_chain: Optional[List[str]] = None,
+        timeout_profile: str = "default",
     ) -> str:
         if messages is not None:
             messages_payload = list(messages)
@@ -255,15 +426,12 @@ class LLMClient:
             if prompt:
                 messages_payload.append({"role": "user", "content": prompt})
 
-        if model is None:
-            for prefix, env in TASK_MODEL_ENV:
-                if tag.startswith(prefix) and os.environ.get(env):
-                    model = os.environ[env]
-                    break
         budget = float(os.environ.get("LLM_BUDGET_USD", "0") or 0)
         if budget and _SPENT_USD[0] >= budget:
             raise LLMBudgetExceeded(f"LLM budget exhausted: spent ${_SPENT_USD[0]:.3f} >= LLM_BUDGET_USD=${budget}")
-        chain = [model or self.default_model] + [m for m in self.fallback_models if m != (model or self.default_model)]
+        chain = self._dedupe_models(model_chain) if model_chain is not None else self.model_chain_for(tag, model)
+        if not chain:
+            raise RuntimeError("LLM model chain is empty")
         last_err = None
         for m in chain:
             for attempt in range(1, retries + 1):
@@ -275,7 +443,12 @@ class LLMClient:
                 t0 = time.perf_counter()
                 _acquire_slot(self.min_interval_s)
                 try:
-                    res = self._stream_call(payload)
+                    request_timeout, first_token_timeout = self._timeouts_for_model(m, timeout_profile)
+                    res = self._stream_call(
+                        payload,
+                        request_timeout=request_timeout,
+                        first_token_timeout=first_token_timeout,
+                    )
                     text = _strip_think(res["text"])
                     if not text.strip():
                         raise RuntimeError("empty completion")
@@ -343,11 +516,46 @@ class LLMClient:
         temperature: float = 0.1,
         max_tokens: int = 8192,
         tag: str = "",
+        timeout_profile: str = "default",
     ) -> Dict[str, Any]:
         json_sys_prompt = (system_prompt or "") + "\n\nCRITICAL: Respond ONLY with a valid JSON object. Do NOT enclose in markdown formatting or backticks."
-        raw_text = self.complete(prompt, system_prompt=json_sys_prompt, model=model, temperature=temperature,
-                                 max_tokens=max_tokens, response_format={"type": "json_object"}, tag=tag)
-        return self.parse_json_text(raw_text)
+        # Transport fallback alone is insufficient for extraction: a fast model
+        # can answer successfully yet emit unusable JSON.  In that case retry on
+        # the next scheduled tier, rather than failing the whole PDF workflow.
+        chain = self.model_chain_for(tag, model)
+        last_error: Optional[Exception] = None
+        for idx, selected_model in enumerate(chain, start=1):
+            try:
+                raw_text = self.complete(
+                    prompt,
+                    system_prompt=json_sys_prompt,
+                    model=selected_model,
+                    model_chain=[selected_model],
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    response_format={"type": "json_object"},
+                    tag=tag,
+                    timeout_profile=timeout_profile,
+                )
+            except Exception as exc:
+                # A transport failure on one tier is not terminal for a JSON
+                # task.  Continue to the next scheduled model just as we do
+                # when a response fails schema validation below.
+                last_error = exc
+                continue
+            try:
+                return self.parse_json_text(raw_text)
+            except ValueError as exc:
+                last_error = exc
+                self._log(
+                    tag,
+                    selected_model,
+                    idx,
+                    "invalid_json",
+                    {"total_s": 0.0, "completion_tokens": len(raw_text) // 4},
+                    str(exc),
+                )
+        raise last_error or ValueError("Failed to parse JSON from all scheduled models")
 
     @staticmethod
     def parse_json_text(raw_text: str) -> Dict[str, Any]:
