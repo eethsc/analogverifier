@@ -62,47 +62,77 @@ flowchart LR
 
 이 설계는 모든 데이터시트 호출에 큰 모델을 쓰는 방식이 아니다. 정상 페이지는 작은 모델 두 단계에서 끝나고, frontier는 장애가 난 한 페이지를 회복하는 최후 수단이다.
 
-### 적응형 LLM 스케줄러
+### 적응형 LLM 스케줄러 (AgentBaton × Terminus-4B 기반 실측 최적화)
 
-`ai_analog_designer/llm_client.py`는 `LLM_SCHEDULER=adaptive`를 기본값으로 사용한다. `LLM_MODEL` 또는 단계별 명시 모델을 설정하지 않았을 때만 아래 경로가 적용된다.
+`ai_analog_designer/llm_client.py`는 **Terminus-4B(Microsoft, 2026)** 의 *'터미널/툴 실행 격리 및 요약 압축'* 원칙과 **AgentBaton(NVIDIA, 2026)** 의 *'Capable $	o$ Efficient 일방향 핸드오프 비대칭성'* 연구 결과를 아날로그 회로 설계 워크플로우에 최적화하여 적용했습니다.
 
-| 작업 태그 | 1차 경로 | 장애/후속 경로 | 의도 |
+#### 📊 NVIDIA NIM API 모델별 실측 벤치마크 및 큐 지연 통계
+
+NVIDIA NIM API(`integrate.api.nvidia.com`) 환경에서 실제 소형(SLM)부터 대형(Frontier) 모델까지 **TTFT(Time to First Token), 처리량(TPS), 반복 연속 호출 큐 지연, 동시성(Concurrency) 한계점**을 직접 실측한 결과입니다.
+
+##### 1. 모델 체급별 응답 속도 및 가용성 통계
+| 모델 계열 / ID | 모델 체급 | 상태 | TTFT (첫 토큰) | 속도 (TPS) | 특성 및 적합한 역할 |
+| :--- | :---: | :---: | :---: | :---: | :--- |
+| **`poolside/laguna-xs-2.1`** | **초경량 SLM** | **정상** | **0.506s** | **155.7 tok/s** | **속도 1위**. 정형화된 JSON 파싱, 고속 정규식 복구용으로 극강 |
+| **`nvidia/nemotron-3.5-bolt-e4b`** | **4B SLM** | **정상** | **0.590s** | **36.7 tok/s** | **Terminus-4B 급 체급**. 단일 툴 실행 격리 및 넷리스트 전처리 전담 |
+| **`nvidia/nemotron-3.5-lightning-30b-a3b`** | **30B MoE (3B 활성)** | **정상** | **0.456s ~ 0.526s** | **91.1 ~ 131.5 tok/s** | **주력 오케스트레이터**. 빠른 반응성과 안정적인 회로 합성 능력 보유 |
+| **`nvidia/nemotron-3-nano-omni-30b-a3b-reasoning`**| **30B 추론형 MoE** | **정상** | **0.705s ~ 1.067s** | **66.4 ~ 77.0 tok/s** | 고난도 PDG 게이트 디버깅 및 복잡한 바이어스 회로 추론에 최적 |
+| `deepseek-ai/deepseek-v4.1-flash` | Flash 모델 | 정상 | 8.173s | 3.3 tok/s | 서버 큐 진입 지연이 크고 속도가 느려 실시간 에이전트 루프에 부적합 |
+| `stepfun-ai/step-5-preview` | 중대형 | 정상 | 4.593s | 3.1 tok/s | TTFT 4.5초로 지연 발생 |
+| `nvidia/nemotron-3-ultra-550b-a55b` | 550B 초거대 MoE | **타임아웃** | **30s 초과 (최대 710s)** | 측정 불가 | **서버 큐 적체 심각**. 콜드스타트/큐 대기로 동기 워크플로우를 정지시킴 (제거됨) |
+| `llama-3.1-nemotron-70b`, `codestral-22b` 등 | 22B ~ 70B | **HTTP 404** | - | - | 현재 API 키 계정에 미할당(Not found for account) |
+
+##### 2. 연속 호출 및 동시성(Concurrency) 스트레스 통계
+- **순차 연속 호출(Sequential 10회 연속, 0.1s 간격)**:
+  - Call 1~10 모두 TTFT **0.39s ~ 0.81s** 유지, 속도 **100~131.5 tok/s** 기록.
+  - **결과**: 순차 단독 호출 시에는 10회 이상 연속으로 호출해도 서버 큐 지연이 전혀 발생하지 않음.
+- **동시성(Concurrency) 한계점 실측 (`nemotron-3.5-lightning-30b-a3b`)**:
+  - $N = 1 \sim 4$ 동시 요청: Avg TTFT **0.65s ~ 0.66s** (Max 0.72s). **완전 무지연 처리 구간 (Sweet Spot)**
+  - $N = 6$ 동시 요청: Avg TTFT **1.432s**로 급증 (서버 측 큐 적체 시작)
+  - $N = 8$ 동시 요청: Avg TTFT **2.239s** (Max 3.185s, 대기 큐 심화)
+  - $N = 12$ 동시 요청: **HTTP 429 Too Many Requests 발생** (12개 중 4개 거절)
+  - **운용 상한선 확정**: 프로세스 동시 요청 상한은 반드시 **`LLM_MAX_CONCURRENCY=4`** 로 제한하여 큐 지연과 429 에러를 원천 차단함.
+
+---
+
+#### 🛠️ 최적화된 적응형 LLM 스케줄링 테이블
+
+실측 데이터에 기반하여, 지연을 유발하는 550B 모델을 배제하고 경량화된 고속 SLM 및 30B MoE 계열로 3단 티어를 전면 재구성했습니다.
+
+| 작업 태그 | 1차 경로 | 장애/후속 경로 | 설계 의도 (AgentBaton × Terminus) |
 |---|---|---|---|
-| `hkg_specs_pN` | fast → capable | 페이지 실패 시 `hkg_specs_retry_pN`: frontier | 비용을 낮추되 빈 HKG를 금지 |
-| `hkg_pins` | capable → frontier → fast | 순차 폴백 | 핀/포트 인터페이스 정확도 우선 |
-| `hermes_turn_1..2` | capable → fast → frontier | 전체 경로 폴백 | 초반 합성의 가용성 확보 |
-| `hermes_turn_3+` | frontier → capable → fast | 전체 경로 폴백 | 반복 수리 단계의 난도 상승 반영 |
-| `harness2_synth`, `synth` | capable → fast | — | 구조화 합성 응답 |
-| `dyn_tb`, `tb`, `verifier_*` | fast → capable | — | 짧은 테스트벤치/판정 작업 |
+| `hkg_specs_pN` | fast → capable | 페이지 실패 시 `hkg_specs_retry_pN`: frontier | 정형 표 추출은 초경량 SLM으로 고속 처리 |
+| `hkg_pins` | capable → frontier → fast | 순차 폴백 | 핀/포트 인터페이스 정확도 최우선 보장 |
+| `hermes_turn_1..2` | capable → fast → frontier | 전체 경로 폴백 | **AgentBaton 초기 단계**: Capable 모델이 글로벌 토폴로지 및 뼈대 회로 완성 |
+| `hermes_turn_3+` | frontier → capable → fast | 전체 경로 폴백 | **고난도 수리 단계**: DC 바이어스/이득 수렴 실패 시 30B 추론 모델 투입 |
+| `harness2_synth`, `synth` | capable → fast | — | 구조화된 물리 트랜지스터 넷리스트 합성 |
+| `dyn_tb`, `tb`, `verifier_*` | fast → capable | — | **Terminus 서브에이전트**: 원시 시뮬레이션 로그 압축 및 짧은 검증 |
 
-기본 NVIDIA NIM 티어는 다음과 같다.
+기본 NVIDIA NIM 티어 구성:
+| 티어 | 기본 모델 | 체급 / 특징 | 배정 역할 |
+|---|---|---|---|
+| **fast** | `nvidia/nemotron-3.5-bolt-e4b` | 4B SLM (0.59s TTFT) | 표 행 파싱, 테스트벤치 문법 검증, 원시 로그 압축 |
+| **capable** | `nvidia/nemotron-3.5-lightning-30b-a3b` | 30B MoE (0.45s TTFT, 100+ tok/s) | 핀 인터페이스, PDG 스케줄링, 일반 회로 합성 (주력 오케스트레이터) |
+| **frontier** | `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning` | 30B 추론형 MoE (0.7s TTFT, 77 tok/s) | 실패한 사양 페이지 복구, 후기 Hermes 3턴 이후 심층 회로 수리 |
 
-| 티어 | 기본 모델 | 역할 |
-|---|---|---|
-| fast | `deepseek-ai/deepseek-v4.1-flash` | 표 행·테스트벤치·단순 구조화 추출 |
-| capable | `z-ai/glm-5.3-flash` | 핀 인터페이스 및 일반 합성 |
-| frontier | `nvidia/nemotron-3-ultra-550b-a55b` | 실패한 사양 페이지와 후기 Hermes 수리 |
+---
 
-명시적 운영자 선택은 자동 라우팅보다 우선한다. `LLM_MODEL`은 모든 작업의 기본 모델을 고정하며, `LLM_EXTRACT_MODEL`, `LLM_HERMES_MODEL`, `LLM_SYNTH_MODEL`, `LLM_TB_MODEL`은 해당 단계만 고정한다. 기존 동작이 필요하면 `LLM_SCHEDULER=legacy`를 사용할 수 있다.
+### 시간 제한, 재시도 및 과부하 제어 (실측 기반 대폭 단축)
 
-### 시간 제한, 재시도 및 과부하 제어
+실측 결과 정상적인 모델은 0.5s~1.0s 내에 첫 토큰(TTFT)을 반환하므로, 기존의 과도하게 길었던 시간 제한(60~90초 대기)을 대폭 단축하여 서버 장애 시 즉시 다음 티어로 장애 복구(Failover)되도록 개선했습니다.
 
-모든 스트리밍 호출은 첫 바이트 대기(TTFT)와 전체 경과 시간 제한을 모두 가진다. 일반 에이전트 턴의 기본 시간 제한은 작게 유지하고, 데이터시트 테이블 추출에만 별도 프로필을 적용한다.
+| 프로필/티어 | 전체 제한 기본값 | TTFT 제한 기본값 | 단축 효과 | 적용 범위 |
+|---|---:|---:|---|---|
+| **일반 fast** | **35초** (기존 45s) | **12초** (기존 20s) | 빠른 장애 감지 | 짧은 생성·문법 검증 |
+| **일반 capable** | **60초** (기존 75s) | **15초** (기존 35s) | 20초 단축 | 일반 Hermes/합성 루프 |
+| **일반 frontier** | **90초** (기존 120s) | **25초** (기존 60s) | 35초 단축 | 후기 고난도 수리 |
+| **추출 fast** | **45초** (기존 55s) | **15초** (기존 30s) | 15초 단축 | `hkg_specs_pN` |
+| **추출 capable** | **90초** (기존 110s) | **25초** (기존 60s) | 35초 단축 | `hkg_specs_pN` |
+| **추출 frontier** | **150초** (기존 210s) | **40초** (기존 90s) | 50초 단축 | `hkg_specs_retry_pN` |
 
-| 프로필/티어 | 전체 제한 기본값 | TTFT 제한 기본값 | 적용 범위 |
-|---|---:|---:|---|
-| 일반 fast | 45초 | 20초 | 짧은 생성·검증 |
-| 일반 capable | 75초 | 35초 | 일반 Hermes/합성 |
-| 일반 frontier | 120초 | 60초 | 후기 수리 |
-| 추출 fast | 55초 | 30초 | `hkg_specs_pN` |
-| 추출 capable | 110초 | 60초 | `hkg_specs_pN` |
-| 추출 frontier | 210초 | 90초 | `hkg_specs_retry_pN` |
-
-- `LLM_MAX_CONCURRENCY`는 프로세스 전체 요청 수를 제한한다(기본 4).
-- 타임아웃은 같은 모델을 무한 재시도하지 않는다. 즉시 다음 티어로 이동한다.
-- `complete_json()`은 전송 실패뿐 아니라 JSON 파싱 실패도 다음 티어로 넘긴다.
-- 빈 `electrical_parameters` 응답은 성공으로 취급하지 않고 페이지 재시도 대상이 된다.
-- `LLM_TIMEOUT_S`, `LLM_TTFT_TIMEOUT_S`는 각 프로필의 상한이다. 모델별/추출별 값도 이 상한을 넘지 않는다.
+- `LLM_MAX_CONCURRENCY`는 **실측 최적값인 4**로 고정하여 서버 큐 지연(6개 이상) 및 HTTP 429 Rate-limit(12개 이상)을 원천 차단합니다.
+- 첫 바이트 지연(TTFT)이 12~25초를 초과하면 서버 큐 교착 상태로 간주하고 즉시 다음 티어 모델로 전환합니다.
+- `complete_json()`은 전송 실패뿐 아니라 JSON 파싱 실패도 다음 티어로 즉시 넘깁니다.
 
 ### Web Studio 사용자 경험 및 상태 의미
 

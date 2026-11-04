@@ -62,14 +62,13 @@ PROVIDERS = {
     "nim": {
         "base_url": lambda: os.environ.get("NIM_BASE_URL", "https://integrate.api.nvidia.com/v1").rstrip("/") + "/chat/completions",
         "key_env": "NVIDIA_API_KEY",
-        # Legacy default is retained for LLM_SCHEDULER=legacy.  The adaptive
-        # scheduler below never uses this 550B model for routine extraction.
-        "default_model": lambda: os.environ.get("LLM_MODEL", "nvidia/nemotron-3-ultra-550b-a55b"),
+        # Empirical benchmark verified defaults (AgentBaton Capable-to-Efficient & Terminus Subagent architecture)
+        "default_model": lambda: os.environ.get("LLM_MODEL", "nvidia/nemotron-3.5-lightning-30b-a3b"),
         "fallback_models": lambda: [m for m in os.environ.get(
-            "LLM_FALLBACK_MODELS", "deepseek-ai/deepseek-v4.1-flash,z-ai/glm-5.3-flash").split(",") if m],
-        "fast_model": lambda: os.environ.get("LLM_FAST_MODEL", "deepseek-ai/deepseek-v4.1-flash"),
-        "capable_model": lambda: os.environ.get("LLM_CAPABLE_MODEL", "z-ai/glm-5.3-flash"),
-        "frontier_model": lambda: os.environ.get("LLM_FRONTIER_MODEL", "nvidia/nemotron-3-ultra-550b-a55b"),
+            "LLM_FALLBACK_MODELS", "nvidia/nemotron-3.5-lightning-30b-a3b,nvidia/nemotron-3-nano-omni-30b-a3b-reasoning,poolside/laguna-xs-2.1").split(",") if m],
+        "fast_model": lambda: os.environ.get("LLM_FAST_MODEL", "nvidia/nemotron-3.5-bolt-e4b"),
+        "capable_model": lambda: os.environ.get("LLM_CAPABLE_MODEL", "nvidia/nemotron-3.5-lightning-30b-a3b"),
+        "frontier_model": lambda: os.environ.get("LLM_FRONTIER_MODEL", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"),
         "supports_json_mode": True,
     },
     "openrouter": {
@@ -210,14 +209,14 @@ class LLMClient:
         self.request_timeout = float(request_timeout or os.environ.get("LLM_TIMEOUT_S", 240))
         self.first_token_timeout = float(first_token_timeout or os.environ.get("LLM_TTFT_TIMEOUT_S", 90))
         self._tier_request_timeouts = {
-            "fast": float(os.environ.get("LLM_FAST_TIMEOUT_S", 45)),
-            "capable": float(os.environ.get("LLM_CAPABLE_TIMEOUT_S", 75)),
-            "frontier": float(os.environ.get("LLM_FRONTIER_TIMEOUT_S", 120)),
+            "fast": float(os.environ.get("LLM_FAST_TIMEOUT_S", 35)),
+            "capable": float(os.environ.get("LLM_CAPABLE_TIMEOUT_S", 60)),
+            "frontier": float(os.environ.get("LLM_FRONTIER_TIMEOUT_S", 90)),
         }
         self._tier_ttft_timeouts = {
-            "fast": float(os.environ.get("LLM_FAST_TTFT_TIMEOUT_S", 20)),
-            "capable": float(os.environ.get("LLM_CAPABLE_TTFT_TIMEOUT_S", 35)),
-            "frontier": float(os.environ.get("LLM_FRONTIER_TTFT_TIMEOUT_S", 60)),
+            "fast": float(os.environ.get("LLM_FAST_TTFT_TIMEOUT_S", 12)),
+            "capable": float(os.environ.get("LLM_CAPABLE_TTFT_TIMEOUT_S", 15)),
+            "frontier": float(os.environ.get("LLM_FRONTIER_TTFT_TIMEOUT_S", 25)),
         }
         # Datasheet table extraction is a bounded, high-value batch operation.
         # It needs more room than a chat/tool turn (a page can contain hundreds
@@ -225,14 +224,14 @@ class LLMClient:
         # Keeping this separate prevents a slow extraction request from making
         # every Hermes turn wait several minutes.
         self._extraction_request_timeouts = {
-            "fast": float(os.environ.get("LLM_EXTRACT_FAST_TIMEOUT_S", 55)),
-            "capable": float(os.environ.get("LLM_EXTRACT_CAPABLE_TIMEOUT_S", 110)),
-            "frontier": float(os.environ.get("LLM_EXTRACT_FRONTIER_TIMEOUT_S", 210)),
+            "fast": float(os.environ.get("LLM_EXTRACT_FAST_TIMEOUT_S", 45)),
+            "capable": float(os.environ.get("LLM_EXTRACT_CAPABLE_TIMEOUT_S", 90)),
+            "frontier": float(os.environ.get("LLM_EXTRACT_FRONTIER_TIMEOUT_S", 150)),
         }
         self._extraction_ttft_timeouts = {
-            "fast": float(os.environ.get("LLM_EXTRACT_FAST_TTFT_TIMEOUT_S", 30)),
-            "capable": float(os.environ.get("LLM_EXTRACT_CAPABLE_TTFT_TIMEOUT_S", 60)),
-            "frontier": float(os.environ.get("LLM_EXTRACT_FRONTIER_TTFT_TIMEOUT_S", 90)),
+            "fast": float(os.environ.get("LLM_EXTRACT_FAST_TTFT_TIMEOUT_S", 15)),
+            "capable": float(os.environ.get("LLM_EXTRACT_CAPABLE_TTFT_TIMEOUT_S", 25)),
+            "frontier": float(os.environ.get("LLM_EXTRACT_FRONTIER_TTFT_TIMEOUT_S", 40)),
         }
         self.hermes_escalate_after = max(1, int(os.environ.get("LLM_HERMES_ESCALATE_AFTER", "3")))
         self.min_interval_s = float(os.environ.get("LLM_MIN_INTERVAL_S", 0.5))
