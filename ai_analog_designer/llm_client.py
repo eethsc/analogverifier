@@ -86,9 +86,18 @@ PROVIDERS = {
 
 
 def repair_truncated_json(raw: str) -> Optional[Dict[str, Any]]:
-    """Attempts to repair and parse a truncated or malformed JSON string."""
+    """Attempts to repair and parse a truncated or malformed JSON string with control-char tolerance."""
     text = raw.strip()
-    for trim_len in range(len(text), max(10, len(text) - 1000), -5):
+    # Step 1: Direct attempt with strict=False (allows unescaped newlines/tabs in strings)
+    try:
+        data = json.loads(text, strict=False)
+        if isinstance(data, (dict, list)):
+            return data
+    except Exception:
+        pass
+
+    # Step 2: Bracket repair loop with strict=False
+    for trim_len in range(len(text), max(10, len(text) - 1000), -1):
         candidate = text[:trim_len].rstrip()
         if candidate.endswith(","):
             candidate = candidate[:-1].rstrip()
@@ -110,7 +119,9 @@ def repair_truncated_json(raw: str) -> Optional[Dict[str, Any]]:
         if in_str:
             candidate += '"'
         try:
-            return json.loads(candidate + "".join(reversed(stack)))
+            data = json.loads(candidate + "".join(reversed(stack)), strict=False)
+            if isinstance(data, (dict, list)):
+                return data
         except Exception:
             continue
     return None

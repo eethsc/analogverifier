@@ -48,7 +48,7 @@ class HermesAgent:
     def __init__(
         self,
         workspace_dir: str,
-        tools: HermesAnalogTools,
+        tools: Optional[HermesAnalogTools] = None,
         llm_client: Optional[LLMClient] = None,
         model: Optional[str] = None,
         temperature: float = 0.1,
@@ -74,6 +74,10 @@ class HermesAgent:
         self.messages: List[Dict[str, str]] = []
         self.trajectory: List[AgentTurnResult] = []
         self._prev_tool_signatures: List[str] = []
+
+        from ai_analog_designer.hermes_core.tool_decision_router import ToolDecisionRouter
+        dut_name = getattr(self.tools, "dut_name", "DUT") if self.tools else "DUT"
+        self.router = ToolDecisionRouter(dut_name=dut_name)
 
         self._ensure_workspace()
 
@@ -183,7 +187,12 @@ CRITICAL: NEVER use ellipses, placeholders, or undefined X-subcircuit stubs in t
 </architecture_summary>
 <spice_netlist>
 .subckt {self.tools.dut_name} {pins_line}
-* Transistor level circuit components and models
+* 1. DC Biasing and Current Mirrors (e.g. Q1, Q2, R1...)
+* 2. Core Functional Blocks (e.g. Differential Pair, Gain Stage)
+* 3. Output Stage / Buffer
+* 4. Explicit Device Models
+.model QNPN NPN (IS=1e-16 BF=100)
+.model QPNP PNP (IS=1e-16 BF=50)
 .ends {self.tools.dut_name}
 </spice_netlist>
 """
@@ -209,7 +218,7 @@ CRITICAL: NEVER use ellipses, placeholders, or undefined X-subcircuit stubs in t
         for m in re.finditer(r'<tool_call>\s*(.*?)\s*</tool_call>', clean_text, re.DOTALL | re.IGNORECASE):
             raw_call = m.group(1).strip()
             try:
-                data = json.loads(raw_call)
+                data = json.loads(raw_call, strict=False)
                 if isinstance(data, dict) and "name" in data:
                     calls.append(data)
             except Exception:
@@ -223,7 +232,7 @@ CRITICAL: NEVER use ellipses, placeholders, or undefined X-subcircuit stubs in t
             for m in re.finditer(r'<tool_call>\s*({[\s\S]*?})(?=\s*<tool_call>|\s*```|\s*$)', clean_text, re.IGNORECASE):
                 raw_call = m.group(1).strip()
                 try:
-                    data = json.loads(raw_call)
+                    data = json.loads(raw_call, strict=False)
                     if isinstance(data, dict) and "name" in data:
                         calls.append(data)
                 except Exception:
@@ -237,7 +246,7 @@ CRITICAL: NEVER use ellipses, placeholders, or undefined X-subcircuit stubs in t
             for m in re.finditer(r'```(?:tool_call|json)\s*({[\s\S]*?"name"[\s\S]*?})\s*```', clean_text, re.DOTALL):
                 raw_call = m.group(1).strip()
                 try:
-                    data = json.loads(raw_call)
+                    data = json.loads(raw_call, strict=False)
                     if isinstance(data, dict) and "name" in data:
                         calls.append(data)
                 except Exception:
@@ -250,11 +259,60 @@ CRITICAL: NEVER use ellipses, placeholders, or undefined X-subcircuit stubs in t
         if not calls:
             for m in re.finditer(r'({[^{}]*"name"\s*:\s*"([a-zA-Z0-9_]+)"[^{}]*"arguments"\s*:\s*{[^{}]*}[^{}]*})', clean_text):
                 try:
-                    data = json.loads(m.group(1).strip())
+                    data = json.loads(m.group(1).strip(), strict=False)
                     if isinstance(data, dict) and "name" in data:
                         calls.append(data)
                 except Exception:
                     pass
+
+        # Pattern 5: Semantic regex fallback for circuit synthesis / verification / memory tools
+        if not calls:
+            m_name = re.search(r'"name"\s*:\s*"([a-zA-Z0-9_]+)"', clean_text)
+            if m_name:
+                tool_name = m_name.group(1)
+                # Check if there is a netlist inside
+                m_net = re.search(r'(\.subckt\b[\s\S]*?\.ends\b[^\r\n"\\]*)', clean_text, re.IGNORECASE)
+                if m_net:
+                    extracted_nl = m_net.group(1).replace(r'\n', '\n').replace(r'\"', '"').strip()
+                    m_tag = re.search(r'"tag"\s*:\s*"([^"]+)"', clean_text)
+                    calls.append({
+                        "name": tool_name,
+                        "arguments": {
+                            "netlist": extracted_nl,
+                            "tag": m_tag.group(1) if m_tag else "recovered_turn"
+                        }
+                    })
+                elif tool_name == "manage_memory":
+                    m_content = re.search(r'"content"\s*:\s*"([^"]+)"', clean_text)
+                    m_target = re.search(r'"target"\s*:\s*"([^"]+)"', clean_text)
+                    calls.append({
+                        "name": tool_name,
+                        "arguments": {
+                            "action": "add",
+                            "content": m_content.group(1) if m_content else "",
+                            "target": m_target.group(1) if m_target else "memory"
+                        }
+                    })
+                elif tool_name in ("retrieve_subcircuit_blueprint", "search_web_circuit_reference"):
+                    m_query = re.search(r'"query"\s*:\s*"([^"]+)"', clean_text)
+                    m_cat = re.search(r'"category"\s*:\s*"([^"]+)"', clean_text)
+                    calls.append({
+                        "name": tool_name,
+                        "arguments": {
+                            "query": m_query.group(1) if m_query else "",
+                            "category": m_cat.group(1) if m_cat else ""
+                        }
+                    })
+                elif tool_name == "save_subcircuit_blueprint":
+                    m_subckt = re.search(r'"subcircuit_name"\s*:\s*"([^"]+)"', clean_text)
+                    m_cat = re.search(r'"category"\s*:\s*"([^"]+)"', clean_text)
+                    calls.append({
+                        "name": tool_name,
+                        "arguments": {
+                            "subcircuit_name": m_subckt.group(1) if m_subckt else "",
+                            "category": m_cat.group(1) if m_cat else "analog_ic"
+                        }
+                    })
 
         # Deduplicate and clamp to maximum 2 calls per turn to prevent hallucination floods
         unique_calls: List[Dict[str, Any]] = []
@@ -283,7 +341,7 @@ CRITICAL: NEVER use ellipses, placeholders, or undefined X-subcircuit stubs in t
         return len(elem_lines) >= 3
 
     def extract_netlist(self, text: str) -> Optional[str]:
-        """Extracts SPICE netlist from response text."""
+        """Extracts SPICE netlist from response text with maximum resilience."""
         m_net = re.search(r'<spice_netlist>(.*?)</spice_netlist>', text, re.DOTALL | re.IGNORECASE)
         if m_net and self._is_meaningful_netlist(m_net.group(1).strip()):
             return m_net.group(1).strip()
@@ -294,6 +352,12 @@ CRITICAL: NEVER use ellipses, placeholders, or undefined X-subcircuit stubs in t
         m_sub = re.search(r'(?m)^\s*(\.subckt\b[\s\S]*?^\s*\.ends\b[^\r\n]*)', text, re.IGNORECASE)
         if m_sub and self._is_meaningful_netlist(m_sub.group(1).strip()):
             return m_sub.group(1).strip()
+        # Fallback: Match .subckt inside tool calls or quotes (with unescaping)
+        m_json_nl = re.search(r'(\.subckt\b[\s\S]*?\.ends\b[^\r\n"\\]*)', text, re.IGNORECASE)
+        if m_json_nl:
+            candidate = m_json_nl.group(1).replace(r'\n', '\n').replace(r'\"', '"').strip()
+            if self._is_meaningful_netlist(candidate):
+                return candidate
         return None
 
     def run_turn(self, turn_idx: int) -> AgentTurnResult:
@@ -329,6 +393,28 @@ CRITICAL: NEVER use ellipses, placeholders, or undefined X-subcircuit stubs in t
             thought = m_thought.group(1).strip()
 
         tool_calls = self.parse_tool_calls(resp_text)
+        current_nl = self.extract_netlist(resp_text)
+
+        # Jev System-1 Decision: Evaluate state and get calibrated probability distribution
+        prev_pass_rate = self.trajectory[-1].pass_rate if self.trajectory else 0.0
+        history_names = [t.get("name", "") for tr in self.trajectory for t in tr.tool_calls]
+        state_decision = self.router.evaluate_state(
+            turn_idx=turn_idx,
+            pass_rate=prev_pass_rate,
+            has_netlist=bool(current_nl),
+            syntax_valid=True,
+            history_tool_names=history_names,
+            unmet_specs_count=len(getattr(self.tools, "specifications", [])) if self.tools else 0
+        )
+        logger.info(f"[Jev Router] Selected: '{state_decision['selected_tool']}' (confidence: {state_decision['confidence']:.2f}, reason: {state_decision['reason']})")
+
+        # Intercept and guardrail proposed tool calls
+        tool_calls = self.router.intercept_and_guardrail(
+            proposed_calls=tool_calls,
+            state_decision=state_decision,
+            has_extracted_netlist=bool(current_nl)
+        )
+
         tool_outputs = []
 
         turn_result = AgentTurnResult(
@@ -417,13 +503,26 @@ CRITICAL: NEVER use ellipses, placeholders, or undefined X-subcircuit stubs in t
                     f"Blueprint operation processed. Now proceed to synthesize and verify your circuit netlist via `verify_circuit_pdg_gate`."
                 )
             if any(o['tool'] in ('validate_netlist_syntax', 'verify_circuit_pdg_gate', 'auto_eval_physical_gate') for o in tool_outputs):
-                if turn_result.pass_rate < 100.0:
+                if not turn_result.netlist_extracted:
+                    guidance.append(
+                        f"CRITICAL REQUIREMENT: The netlist validated contains NO active or passive components. "
+                        f"An empty skeleton will fail all simulations! You MUST write out the complete transistor-level schematic "
+                        f"(differential pair Q..., current mirror Q..., gain stage Q..., load resistors R...) with explicit `.model` statements, "
+                        f"and test it using `verify_circuit_pdg_gate`."
+                    )
+                elif turn_result.pass_rate < 100.0:
                     guidance.append(
                         f"Current Pass Rate: {turn_result.pass_rate:.1f}% ({turn_result.passed_specs}/{turn_result.total_specs} specs passed). "
                         f"Inspect diagnostic feedback and adjust transistor sizing or bias currents to meet failing specifications."
                     )
                 else:
                     guidance.append("Target achieved: 100% pass rate! Provide final <architecture_summary> and <spice_netlist> to terminate.")
+
+            # Add Jev System-1 Calibrated Router Directive
+            guidance.append(
+                f"[Jev System-1 Router]: Recommended next action is `{state_decision['selected_tool']}` "
+                f"({state_decision['confidence']*100:.0f}% confidence: {state_decision['reason']})."
+            )
 
             guidance_str = "\n".join(guidance) if guidance else (
                 f"Analyze these results. You must now produce or refine the transistor-level SPICE netlist "

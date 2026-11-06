@@ -13,6 +13,7 @@ from typing import Dict, Any, List, Optional, Callable
 
 from ai_analog_designer.circuit_synthesis.netlist_validator import NetlistValidator
 from ai_analog_designer.hermes_core.web_reference_search import WebCircuitReferenceSearcher
+from ai_analog_designer.hermes_core.blueprint_reranker import BlueprintReranker
 
 logger = logging.getLogger("HermesAnalogTools")
 
@@ -52,6 +53,10 @@ class HermesAnalogTools:
 
         self.validator = NetlistValidator()
         self.web_searcher = WebCircuitReferenceSearcher()
+        self.reranker = BlueprintReranker(
+            target_dut=self.dut_name,
+            target_pins=[p.get("name") if isinstance(p, dict) else str(p) for p in (self.pins or [])]
+        )
         self.evaluation_history: List[Dict[str, Any]] = []
 
     def get_tool_schemas(self) -> List[Dict[str, Any]]:
@@ -184,7 +189,7 @@ class HermesAnalogTools:
                 "type": "function",
                 "function": {
                     "name": "search_web_circuit_reference",
-                    "description": "Searches the web using Tavily and Exa neural search for real-world analog circuit schematics, SPICE subcircuit netlists (.subckt), transistor-level topologies, and application note design references.",
+                    "description": "Searches IEEE academic literature (JSSC, TCAS), Exa neural database, and Tavily for peer-reviewed circuit design rationale, transistor-level schematics, SPICE subcircuit netlists (.subckt), and manufacturer application note references.",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -313,36 +318,54 @@ class HermesAnalogTools:
         }
 
     def retrieve_subcircuit_blueprint(self, query: str, category: Optional[str] = None) -> Dict[str, Any]:
-        """Searches blueprint skills in skills/analog_blueprints/."""
+        """Searches blueprint skills in skills/analog_blueprints/ and harness2_library with Reranker scoring."""
         query_norm = query.lower().strip()
         cat_norm = category.lower().strip() if category else ""
         matches = []
 
-        bp_root = os.path.join(self.skills_dir, "analog_blueprints")
-        if os.path.exists(bp_root):
-            for root, dirs, files in os.walk(bp_root):
-                for f in files:
-                    if f.endswith(".md") or f.endswith(".json"):
-                        p = os.path.join(root, f)
-                        try:
-                            with open(p, "r", encoding="utf-8") as fp:
-                                content = fp.read()
-                            is_match = False
-                            if query_norm in content.lower() or query_norm in f.lower():
-                                is_match = True
-                            if cat_norm and cat_norm not in content.lower() and cat_norm not in root.lower():
-                                is_match = False
-                            if is_match:
-                                matches.append({
-                                    "file": os.path.relpath(p, self.skills_dir),
-                                    "title": f,
-                                    "content": content[:3000]
-                                })
-                        except Exception:
-                            pass
+        scan_roots = [os.path.join(self.skills_dir, "analog_blueprints")]
+        # Also include global harness2_library if present
+        repo_harness = os.path.abspath(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "harness2_library"))
+        if os.path.exists(repo_harness) and repo_harness not in scan_roots:
+            scan_roots.append(repo_harness)
+
+        for bp_root in scan_roots:
+            if os.path.exists(bp_root):
+                for root, dirs, files in os.walk(bp_root):
+                    for f in files:
+                        if f.endswith(".md") or f.endswith(".json"):
+                            p = os.path.join(root, f)
+                            try:
+                                with open(p, "r", encoding="utf-8") as fp:
+                                    content = fp.read()
+                                # Allow broad candidate retrieval; the Reranker will rank by relevance
+                                is_candidate = False
+                                if any(t in content.lower() or t in f.lower() for t in query_norm.split()):
+                                    is_candidate = True
+                                elif cat_norm and (cat_norm in content.lower() or cat_norm in root.lower()):
+                                    is_candidate = True
+                                if is_candidate:
+                                    matches.append({
+                                        "file": os.path.relpath(p, bp_root),
+                                        "title": f,
+                                        "content": content[:4000]
+                                    })
+                            except Exception:
+                                pass
+
+        # Deduplicate candidates by file path
+        unique_matches = []
+        seen = set()
+        for m in matches:
+            if m["file"] not in seen:
+                seen.add(m["file"])
+                unique_matches.append(m)
+
+        # Apply Circuit Blueprint Reranker
+        reranked_matches = self.reranker.rerank(unique_matches, query=query, top_k=5)
 
         web_refs: Optional[Dict[str, Any]] = None
-        if len(matches) == 0:
+        if len(reranked_matches) == 0:
             try:
                 web_refs = self.search_web_circuit_reference(
                     query=query,
@@ -355,8 +378,8 @@ class HermesAnalogTools:
         res_dict: Dict[str, Any] = {
             "query": query,
             "category": category,
-            "matches_found": len(matches),
-            "blueprints": matches[:5]
+            "matches_found": len(reranked_matches),
+            "blueprints": reranked_matches
         }
         if web_refs:
             res_dict["web_references"] = web_refs
@@ -369,8 +392,8 @@ class HermesAnalogTools:
         category: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Queries Tavily and Exa for circuit topology references, SPICE netlists, and
-        internal schematic descriptions, and caches the findings in skills/web_references/.
+        Queries IEEE academic literature, Exa, and Tavily for circuit topology references,
+        SPICE netlists, peer-reviewed design rationale, and internal schematic descriptions.
         """
         target_ic = (ic_name or self.dut_name).strip()
         res = self.web_searcher.search_circuit_reference(

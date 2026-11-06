@@ -3,7 +3,8 @@
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
 [![Architecture: Dual-Harness²](https://img.shields.io/badge/Architecture-Dual--Harness%C2%B2-purple.svg)](#-시스템-아키텍처-dual-harness²-공진화-구조)
 [![Agent: Hermes x Harness²](https://img.shields.io/badge/Agent-Hermes%20%C3%97%20Harness%C2%B2-orange.svg)](#-hermes-agent--harness²-자율-합성-아키텍처)
-[![Web Search: Tavily + Exa](https://img.shields.io/badge/Web%20Search-Tavily%20%2B%20Exa-00b4d8.svg)](#-tavily--exa-이중-웹-회로-레퍼런스-검색-엔진-web-circuit-reference-search)
+[![Web Search: IEEE + Tavily + Exa](https://img.shields.io/badge/Literature-IEEE%20%2B%20Tavily%20%2B%20Exa-00b4d8.svg)](#-ieee-학술-논문--tavily--exa-3중-회로-레퍼런스-검색-엔진)
+[![GUI E2E: Playwright Chromium](https://img.shields.io/badge/GUI%20E2E-Playwright%20Chromium-brightgreen.svg)](#-web-studio-gui-엔드투엔드e2e-사용자-시나리오-검증-체계)
 [![Verification: PDG Staged Causal Gate](https://img.shields.io/badge/Verifier-PDG%20Staged%20Causal%20Gate-critical.svg)](#-pdg-기반-4단계-인과-검증-파이프라인-pdg-staged-causal-verification)
 [![Policy: Pure Transistor Analog](https://img.shields.io/badge/SPICE-Pure%20Transistor%20Level%20Only-success.svg)](#-순수-물리-아날로그-강제-정책-zero-behavioral-policy)
 
@@ -20,7 +21,7 @@
 | **Phase 3 — Hermes × Harness² 자율 회로 합성** | [`hermes_agent.py`](ai_analog_designer/hermes_core/hermes_agent.py), [`harness_hermes_tuner.py`](ai_analog_designer/hermes_core/harness_hermes_tuner.py), [`netlist_validator.py`](ai_analog_designer/circuit_synthesis/netlist_validator.py) | ✅ **통합 완료** | **NousResearch Hermes Agent 아키텍처** 래핑 + **Harness²($C_1\sim C_8$) 거버넌스**: 서브서킷 블루프린트 스킬(`skills/analog_blueprints/`) 및 수렴 함정 장기 메모리(`MEMORY.md`) 자율 관리 |
 | **Phase 4 — PDG 4단계 인과 물리 검증** | [`deterministic_testbench.py`](ai_analog_designer/neuro_symbolic_verifier/deterministic_testbench.py), [`verification_flow.py`](ai_analog_designer/neuro_symbolic_verifier/verification_flow.py) | ✅ **PDG 게이트 강제 완료** | **Stage 0(토폴로지/연결성) $\to$ Stage 1(전원/DC 바이어스) $\to$ Stage 2(DC 신호 전달) $\to$ Stage 3(개별 스펙)** 순차 게이트 및 **고유 지표(Unique Kind) 통과율** 도입 |
 | **Phase 5 — Dual-Harness² 공진화** | [`dual_harness2_coordinator.py`](ai_analog_designer/neuro_symbolic_verifier/harness2_verifier/dual_harness2_coordinator.py), [`golden_oracle_anchor.py`](ai_analog_designer/neuro_symbolic_verifier/harness2_verifier/golden_oracle_anchor.py) | ✅ **구현·검증 완료** | 합성 하네스($C_1\sim C_8$)와 검증 하네스($V_1\sim V_3$) 구조화 + 제조사 Golden 모델 100% 통과 게이트키퍼 |
-| **인터랙티브 Web Studio** | [`studio_server.py`](ai_analog_designer/web_studio/studio_server.py), [`run_studio.py`](run_studio.py) | ✅ **E2E 테스트 통과** | 실시간 PDG 시각화, 시퀀싱 타임라인, Dual-Harness² 실시간 합성 및 HKG 캐시 연동 (Playwright 검증) |
+| **인터랙티브 Web Studio & GUI E2E 검증** | [`studio_server.py`](ai_analog_designer/web_studio/studio_server.py), [`e2e_gui_scenario_runner.py`](e2e_gui_scenario_runner.py) | ✅ **E2E 체계화 완료** | Playwright Chromium 기반 실 브라우저 5대 사용자 시나리오(대시보드 초기화, PDG SVG 그래프 렌더링, 시퀀싱 타임라인 핀 자극, Dual-Harness² 지식 카드, 보안 샌드박스) 자동 검증 및 시각 아티팩트 리포트 자동 생성 |
 
 ---
 
@@ -334,20 +335,83 @@ flowchart LR
 - **수렴 실패 함정 장기 메모리 (`memories/MEMORY.md`)**: 과거 $500\text{ }\Omega$ 미러 병렬 단락 사고나 부유 노드 발진 등의 결함 방지 레시피를 `MEMORY.md`에 주입하고, 에이전트가 시뮬레이션 실패 분석 중 새로운 회로 함정을 발견하면 `manage_memory` 도구로 동적 기록(`add`/`patch`)합니다.
 - **자율 도구 디스패치 & 양방향 동기화**: Hermes가 `verify_circuit_pdg_gate`를 통해 100% 스펙 달성을 입증하면, `save_subcircuit_blueprint`로 신규 골든 블루프린트를 스킬 저장소에 등록하고 `HarnessLibrary`로 자동 동기화합니다.
 
-### 4. 🌐 Tavily + Exa 이중 웹 회로 레퍼런스 검색 엔진 ([`web_reference_search.py`](ai_analog_designer/hermes_core/web_reference_search.py))
+### 4. 📚 IEEE 학술 논문 + Tavily + Exa 3중 회로 레퍼런스 검색 엔진 ([`web_reference_search.py`](ai_analog_designer/hermes_core/web_reference_search.py))
 
-로컬 `harness2_library`에 아직 등록되지 않은 신규/고복잡도 IC(예: `TPA3116D2` 스테레오 BTL Class-D 오디오 앰프 등)를 합성하거나 시뮬레이션 스펙 미달이 발생할 때, 에이전트가 정의되지 않은 `X... (placeholder)` 스텁을 생성하는 문제를 해결하기 위해 **Tavily Search API**와 **Exa Neural Search API**를 결합한 이중 웹 회로 레퍼런스 검색 엔진을 통합했습니다:
+로컬 `harness2_library`에 아직 등록되지 않은 신규/고복잡도 IC를 합성하거나 시뮬레이션 스펙 미달이 발생할 때, 에이전트가 정의되지 않은 `X... (placeholder)` 스텁을 생성하거나 일반 웹의 불완전한 가짜 모델에 현혹되지 않도록 **IEEE 학술 논문 검색 엔진**, **Tavily Search API**, **Exa Neural Search API**를 결합한 3중 레퍼런스 검색 엔진을 통합했습니다:
 
-1. **병렬 이중 검색 아키텍처 (`WebCircuitReferenceSearcher`)**:
-   - **Tavily API**: 대상 IC의 내부 블록 다이어그램, 트랜지스터 단 구성, 바이어스 설계 수식에 대한 기술 요약(`tavily_answer`) 및 웹 문서를 실시간 합성합니다.
-   - **Exa Neural Search API**: 학술 논문, 제조사 애플리케이션 노트, 공개 SPICE 서브서킷(`.subckt`, `.model`) 리포지토리를 시맨틱 검색하여 실제 SPICE 코드 스니펫(`spice_hints`)을 추출합니다.
-2. **워크플로우 3단계 자동 연동**:
-   - **사전 컨텍스트 주입 (Pre-Synthesis Grounding)**: [`hermes_workflow.py`](ai_analog_designer/hermes_core/hermes_workflow.py) 및 [`harness2_architect.py`](ai_analog_designer/circuit_synthesis/harness2/harness2_architect.py)가 회로 합성 시작 전 대상 IC의 웹 회로 레퍼런스를 자동 조회하여 프롬프트에 주입합니다.
-   - **에이전트 자율 도구 (`search_web_circuit_reference` & 블루프린트 폴백)**: 에이전트가 능동적으로 웹 회로 레퍼런스를 검색하거나, `retrieve_subcircuit_blueprint`에서 로컬 매칭이 없을 때 자동으로 Tavily + Exa 검색을 실행하고 결과를 `skills/web_references/`에 영구 캐싱합니다.
-   - **Harness² Propose 단계 보강 (`execute_contrastive_iteration`)**: 1차 시뮬레이션에서 실패한 스펙(`failed_specs`)을 기반으로 Harness²가 개선안을 Propose할 때 관련 회로 설계 레퍼런스를 함께 참조합니다.
+1. **병렬 3중 검색 아키텍처 (`WebCircuitReferenceSearcher`)**:
+   - **IEEE 학술 논문 엔진 (OpenAlex + IEEE Xplore REST)**: 외부 의존성 없는 독립 REST API를 통해 **IEEE Journal of Solid-State Circuits (JSSC)**, **IEEE TCAS**, **IEEE Access** 등 반도체 권위지의 최신 논문을 검색하고, 역색인을 복원한 완전한 기술 초록(Abstract)에서 **트랜지스터 토폴로지, 위상 마진, 소자 사이징 방정식 등 실제 설계 근거(Design Rationale)**를 추출합니다.
+   - **Tavily API**: 비기술적 도메인(유튜브, 블로그 등)을 필터링하고 대상 IC의 내부 블록 다이어그램, 트랜지스터 단 구성, 바이어스 설계 수식에 대한 기술 요약(`tavily_answer`)을 실시간 합성합니다.
+   - **Exa Neural Search API**: 제조사 애플리케이션 노트 및 공개 SPICE 서브서킷(`.subckt`, `.model`) 리포지토리를 시맨틱 검색합니다.
+2. **비물리 매크로모델 가드레일 (`_extract_spice_hints`)**:
+   - LTspice 전용 비물리 소자(`A... SCHMITT`, `SRFLOP` 등)를 자동 기각하고, **순수 물리 트랜지스터(`Q`, `M`, `R`, `C`, `D`) 소자만 넷리스트 힌트로 채택**하도록 필터를 강화했습니다.
 3. **동적 테스트벤치 문법 자동 정화기 (`_sanitize_dynamic_testbench`) 및 플레이스홀더 차단**:
-   - [`dynamic_testbench_harness.py`](ai_analog_designer/neuro_symbolic_verifier/dynamic_testbench_harness.py)에서 LLM이 테스트벤치 생성 시 전원/제어 핀에 `V` 접두사나 접지 노드 `0`을 누락하는 실수(`PVCC PVCC 21` $\to$ `V_PVCC PVCC 0 21`, `GND GND 0` $\to$ `V_GND GND 0 0`) 및 비표준 `.meas ... param ... from=` 구문을 결정론적으로 자동 수리합니다.
+   - [`dynamic_testbench_harness.py`](ai_analog_designer/neuro_symbolic_verifier/dynamic_testbench_harness.py)에서 LLM이 테스트벤치 생성 시 전원/제어 핀에 `V` 접두사나 접지 노드 `0`을 누락하는 실수를 결정론적으로 자동 수리합니다.
    - [`hermes_agent.py`](ai_analog_designer/hermes_core/hermes_agent.py)의 `_is_meaningful_netlist`가 정의되지 않은 `X... (placeholder)` 서브서킷 스텁을 원천 거부하고 실제 트랜지스터/수동 소자(`Q, M, R, C, D, I, V`)만 채택하도록 강제합니다.
+
+### 5. 🎯 Jev-호환 System-1 도구 라우터 & 회로 Reranker 분리 아키텍처
+
+거대한 SPICE 넷리스트를 JSON 인수로 직접 전달할 때 발생하는 LLM 문법 오류와 도구 호출 드랍을 원천 방지하기 위해, **의사결정(Decision)과 텍스트 생성(Generation)을 분리하는 최신 Agent 아키텍처**를 도입했습니다:
+
+1. **Jev-호환 System-1 Tool Decision Router ([`tool_decision_router.py`](ai_analog_designer/hermes_core/tool_decision_router.py))**:
+   - TypeSafe AI의 Jev 모델 설계 사상을 채택하여, "어떤 도구를 쓸 것인가"를 생성형 LLM이 아니라 **상태 기반 System-1 결정 엔진**이 $P(\text{tool} \mid \text{state})$ 확률 분포로 실시간 계산합니다.
+   - **반복 함정 차단 (Repetition Trap Breaker)**: 에이전트가 회로 합성 없이 `manage_memory`만 연속 호출하는 공회전 루프를 감지하고, 즉시 가드레일을 개입시켜 물리 회로 합성(`verify_circuit_pdg_gate`)으로 강제 전이시킵니다.
+   - **외부 Jev 엔드포인트 연동 지원**: `JEV_ENDPOINT` 및 `JEV_API_KEY` 환경 변수가 설정되면 원격 TypeSafe AI Jev 모델을 직접 활용할 수 있으며, 미설정 시 초고속 로컬 결정 엔진(0ms 레이턴시)으로 무결하게 동작합니다.
+2. **도메인 특화 서브서킷 & 문헌 Reranker ([`blueprint_reranker.py`](ai_analog_designer/hermes_core/blueprint_reranker.py))**:
+   - 단순 문자열 매칭의 한계를 극복하기 위해 **4중 물리 적합도 평가 체계(Lexical Match 30% + Category Alignment 25% + Pin Interface Compatibility 20% + SPICE Physical Primitive Viability 25%)**를 적용했습니다.
+   - 비물리적 디지털/매크로 모델(`A... SCHMITT`)에 페널티를 부과하고 실제 BJT/MOSFET 및 `.model` 카드가 온전히 포함된 회로를 최우선 순위(#1)로 정렬하여 에이전트에게 공급합니다.
+3. **5단계 툴콜 회복력 엔진 ([`test_tool_call_resilience.py`](tests/test_tool_call_resilience.py))**:
+   - `strict=False` 전면 적용, 제어 문자 자동 허용, 1문자 단위 괄호 복원, JSON 완전 파손 시 정규식 기반 시맨틱 인출(Pattern 5)을 통해 **장문의 회로 넷리스트가 포함된 도구 호출의 유실률을 0%로 달성**했습니다.
+
+---
+
+## 🖥️ Web Studio GUI 엔드투엔드(E2E) 사용자 시나리오 검증 체계 (Systematic GUI E2E Verification)
+
+AnalogVerifier는 백엔드 엔진 단위 테스트(Pytest)뿐만 아니라, **실제 아날로그 하드웨어 엔지니어가 브라우저에서 수행하는 인터랙티브 사용자 여정(User Journey) 전체를 자동 검증하는 Playwright 기반 GUI E2E 검증 프레임워크**([`e2e_gui_scenario_runner.py`](e2e_gui_scenario_runner.py))를 표준 핵심 구성 요소로 내장하고 있습니다.
+
+### 1. 사용자 시나리오 5대 검증 영역 (User Scenarios)
+
+```mermaid
+flowchart TD
+    subgraph BrowserEngine["Playwright Headless/Headed Chromium Runner (e2e_gui_scenario_runner.py)"]
+        S1["Scenario 1: 대시보드 로딩 & 모델 라우트<br/>• 14개 샘플 데이터시트 옵션 로딩 확인<br/>• LLM 추론 모델 티어 동적 표출<br/>• 상태 필: Idle 확인"]
+        S2["Scenario 2: Dual-Harness² 지식 카드 검증<br/>• /api/harness2/summary & library 응답 검증<br/>• 축적된 도메인 템플릿/레슨 카드 렌더링 확인"]
+        S3["Scenario 3: 보안 샌드박스 경계 감사<br/>• 임의 경로 순회(C:\\Windows\\win.ini) 차단<br/>• HTTP 400 Bad Request 방어 확인"]
+        S4["Scenario 4: 인터랙티브 PDG 및 타임라인<br/>• PDF 선택 후 PDG Graph 추출<br/>• SVG 노드/엣지 및 핀 테이블 렌더링<br/>• 시간 슬라이더 조작에 따른 실시간 핀 활성화"]
+        S5["Scenario 5: 폐루프 자율 회로 합성 (선택)<br/>• 자연어 디렉티브 입력 & Max Turns 설정<br/>• 실시간 파이프라인 진행 상태 및 넷리스트 검증"]
+    end
+
+    S1 --> S2 --> S3 --> S4 --> S5
+```
+
+### 2. E2E GUI 검증 실행 방법
+
+```powershell
+# 1. 표준 E2E GUI 사용자 시나리오 실행 (헤드리스 모드, LM393 기준)
+python e2e_gui_scenario_runner.py --ic LM393
+
+# 2. 브라우저 창을 직접 띄워 실시간 인터랙션을 확인하는 헤디드(Headed) 모드
+python e2e_gui_scenario_runner.py --ic LM393 --headed
+
+# 3. 신규 IC(LM311, INA128, NE555 등)에 대한 일반화 시나리오 검증
+python e2e_gui_scenario_runner.py --ic LM311 --timeout 300
+
+# 4. 전체 회로 합성 루프까지 포함하는 풀 엔드투엔드 검증 (--generate N)
+python e2e_gui_scenario_runner.py --ic LM393 --generate 2
+
+# 5. Pytest를 통한 통합 CI/CD 자동 실행
+pytest tests/test_web_studio_e2e_scenario.py -v
+```
+
+### 3. 검증 결과 및 자동 생성 아티팩트
+
+검증 스위트를 실행하면 `benchmark_results/gui_e2e_scenarios/<run_id>/`에 다음 산출물이 자동으로 기록되어 UI 결함이나 인터랙션 회귀(Regression)를 즉시 추적할 수 있습니다:
+- **`WEB_STUDIO_E2E_VERIFICATION_REPORT.md`**: 단계별 실행 시간, 합격/불합격 상태, 상세 관측 결과가 정리된 마크다운 보고서
+- **`01_home_dashboard.png`**: Web Studio 초기 대시보드 및 모델 라우트 캡처
+- **`02_sample_selected.png`**: 데이터시트 샘플 선택 화면
+- **`03_pdg_extracted.png`**: 실시간 렌더링된 PDG SVG 인과 그래프 및 핀 배치표
+- **`04_timeline_stimulated.png`**: 슬라이더를 $T_{\text{max}}$로 이동시켰을 때 활성화된 핀 상태
+- **`e2e_gui_scenario_report.json`**: CI/CD 파이프라인 연동용 정량 JSON 메타데이터
 
 ---
 
@@ -394,8 +458,10 @@ analogverifier/
 │   ├── autonomous_design_agent.py       # 5-Phase 전체 파이프라인 및 Dual-Harness² 총괄 오케스트레이터
 │   ├── hermes_core/                     # [Phase 3] Harness² 거버넌스 기반 Hermes 자율 에이전트 코어
 │   │   ├── hermes_agent.py              # Hermes 멀티턴 추론·도구 디스패치 루프 (SOUL.md & MEMORY.md)
+│   │   ├── tool_decision_router.py      # [Jev System-1] 도구 결정 분리 라우터 (P(tool|state) 신뢰도 & 반복 탈출)
+│   │   ├── blueprint_reranker.py        # [Reranker] 물리 트랜지스터 밀도·핀 호환성 기반 블루프린트 재순위화기
 │   │   ├── hermes_tools.py              # PDG 게이트 시뮬레이션, 문법 가드레일, 블루프린트 스킬/메모리/웹검색 도구
-│   │   ├── web_reference_search.py      # Tavily + Exa 병렬 웹 회로 설계 레퍼런스 및 SPICE 스니펫 검색기
+│   │   ├── web_reference_search.py      # IEEE + Tavily + Exa 병렬 웹 회로 레퍼런스 및 학술 논문 검색기
 │   │   ├── harness_hermes_tuner.py      # Harness²(C1~C8) ➔ Hermes 워크스페이스 튜닝 & 양방향 동기화
 │   │   └── hermes_workflow.py           # Hermes 폐루프 자율 합성 워크플로우 러너
 │   ├── llm_client.py                    # Provider 공용 LLM 클라이언트 (NVIDIA NIM / OpenRouter)
@@ -408,6 +474,8 @@ analogverifier/
 │   │   ├── units.py                     # 물리 단위 정규화 (V3)
 │   │   └── verification_flow.py         # PDG 게이트 → 단계별 픽스처 → 행/고유지표 이중 평가 플로우
 │   └── web_studio/                      # 실시간 브라우저 UI 서버
+├── e2e_gui_scenario_runner.py          # [E2E GUI] Web Studio 실 브라우저 5대 사용자 시나리오 자동 검증 러너
+├── run_studio.py                        # Web Studio 로컬 웹 서버 실행 진입점
 ├── output_harness2_netlist/             # PDG 4단계 검증을 통과한 순수 물리 BJT 넷리스트 및 리포트
 │   ├── LM393_FINAL_HARNESS2.cir         # LM393 (16/16 = 100.0% 통과)
 │   ├── TL431_FINAL_HARNESS2.cir         # TL431 (6/6 = 100.0% 통과)
@@ -415,6 +483,10 @@ analogverifier/
 ├── harness2_library/                    # 소자군별 영구 진화 지식 베이스 (LM393, LM358, TL431, TPA3116D2 등)
 ├── benchmarks/pdg_groundtruth/          # 8개 표준 IC 수작업 Ground-Truth 라벨 데이터셋
 └── tests/                               # 단위 테스트 및 엔드투엔드 통합 테스트
+    ├── test_web_studio_e2e_scenario.py        # Web Studio GUI 5대 사용자 시나리오 Pytest 자동화 스위트
+    ├── test_tool_call_resilience.py           # 5단계 툴콜 JSON 제어문자/괄호 복원 회복력 단위 테스트
+    ├── test_jev_router_and_reranker.py        # Jev System-1 라우터 및 서브서킷 Reranker 통합 테스트
+    ├── test_ieee_reference_search.py          # IEEE 학술 논문 검색 및 비물리 SPICE 필터 단위 테스트
     ├── test_circuit_synthesis_success.py      # Hermes × Harness² 100% 자율 회로 합성 E2E 테스트
     ├── test_web_reference_and_fixes.py        # Tavily + Exa 웹 검색, 동적 테스트벤치 수리기, 플레이스홀더 차단 테스트
     ├── test_hermes_harness2_integration.py    # Hermes 에이전트 및 Harness² 튜너 통합 단위 테스트

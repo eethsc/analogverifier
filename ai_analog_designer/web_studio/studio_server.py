@@ -17,7 +17,15 @@ from ..pdf_to_graph import PDGVisualizer
 
 logger = logging.getLogger("StudioServer")
 
-ALLOWED_PDF_ROOTS = [os.path.abspath(p) for p in ("testcases", "uploads")]
+_STUDIO_DIR = os.path.dirname(os.path.abspath(__file__))
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(_STUDIO_DIR))
+
+ALLOWED_PDF_ROOTS = [
+    os.path.abspath("testcases"),
+    os.path.abspath("uploads"),
+    os.path.abspath(os.path.join(_PROJECT_ROOT, "testcases")),
+    os.path.abspath(os.path.join(_PROJECT_ROOT, "uploads")),
+]
 
 
 def safe_pdf_path(pdf_path: str) -> Optional[str]:
@@ -216,7 +224,7 @@ class StudioRequestHandler(SimpleHTTPRequestHandler):
         pdf_path = safe
 
         try:
-            res = PDGVisualizer.extract_from_pdf(pdf_path)
+            res = PDGVisualizer.extract_from_pdf(pdf_path, max_pages=6)
             pins = res["pins"]
             schedule = res["schedule"]
             svg_markup = PDGVisualizer.to_svg(pins, schedule, pdg=res.get("pdg"))
@@ -1016,7 +1024,13 @@ class StudioRequestHandler(SimpleHTTPRequestHandler):
 
     function getTargetPdfPath() {
       if (currentDatasheetMode === 'upload') return uploadedPdfPath;
-      if (currentDatasheetMode === 'sample') return selectedSamplePdfPath;
+      if (currentDatasheetMode === 'sample') {
+        if (!selectedSamplePdfPath) {
+          const sel = document.getElementById('sampleSelect');
+          if (sel && sel.value) selectedSamplePdfPath = sel.value;
+        }
+        return selectedSamplePdfPath;
+      }
       return null;
     }
 

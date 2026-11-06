@@ -125,7 +125,14 @@
       "cue": "Synthesizing LM393_VERIFIED (comparator) with Hermes Autonomous Agent",
       "delta": 100.0,
       "path": "comparator\\LM393_VERIFIED"
+    },
+    {
+      "task_id": "NE555",
+      "category": "general",
+      "cue": "Synthesizing NE555 (Precision Timer) with Hermes Autonomous Agent",
+      "delta": 3.1,
+      "path": "general\\NE555"
     }
   ],
-  "count": 18
+  "count": 19
 }

@@ -156,7 +156,7 @@ class HardwareKnowledgeGraphBuilder:
 
         with cf.ThreadPoolExecutor(max_workers=1 + self.parallel_spec_calls) as ex:
             f_pins = ex.submit(self.llm.complete_json, PINS_PROMPT.format(text=pin_text, roles="|".join(ROLES)),
-                               system_prompt=sys_p, max_tokens=6000, tag="hkg_pins")
+                               system_prompt=sys_p, max_tokens=6000, tag="hkg_pins", timeout_profile="extraction")
             for pn in spec_pages:
                 spec_jobs[ex.submit(extract_spec_page, pn)] = pn
             completed_pages = 0

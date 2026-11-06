@@ -139,10 +139,10 @@ The subcircuit must operate with its negative supply pin tied to 0 V (single sup
                 category=category
             )
             if web_res and web_res.get("formatted_markdown"):
-                web_ref_section = f"\n## WEB CIRCUIT DESIGN REFERENCES (Tavily & Exa):\n{web_res['formatted_markdown']}\n"
+                web_ref_section = f"\n## IEEE ACADEMIC LITERATURE & CIRCUIT DESIGN REFERENCES:\n{web_res['formatted_markdown']}\n"
                 logger.info(
-                    f"Retrieved {web_res.get('references_count', 0)} web circuit references "
-                    f"(Tavily={web_res.get('tavily_ok')}, Exa={web_res.get('exa_ok')}) for {part_name}"
+                    f"Retrieved {web_res.get('references_count', 0)} circuit references "
+                    f"(IEEE={web_res.get('ieee_ok')}, Tavily={web_res.get('tavily_ok')}, Exa={web_res.get('exa_ok')}) for {part_name}"
                 )
         except Exception as e:
             logger.warning(f"Pre-synthesis web reference fetch skipped: {e}")

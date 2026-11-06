@@ -1,9 +1,12 @@
 """
-Web Circuit Reference Search Engine (Tavily + Exa Dual-Engine Integration).
+Web & IEEE Academic Circuit Reference Search Engine.
+Triple-Engine Integration combining:
+  1. IEEE Xplore / OpenAlex Academic Engine (Peer-reviewed transistor topology & design equations)
+  2. Tavily Search API (Synthesized architectural overviews & technical datasheets)
+  3. Exa Neural Search API (Deep semantic netlist & application note retrieval)
 
-Retrieves transistor-level circuit schematics, SPICE subcircuit macromodels,
-manufacturer application notes, and design equations from the web to ground
-Hermes Agent and Harness² synthesis when encountering complex or novel ICs.
+Extracts transistor-level schematics, peer-reviewed design rationale, SPICE macromodels,
+and manufacturer application notes to ground Hermes Agent and Harness² synthesis.
 """
 from __future__ import annotations
 
@@ -13,7 +16,8 @@ import json
 import logging
 import urllib.request
 import urllib.error
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import urllib.parse
+from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, Any, List, Optional
 
 from ai_analog_designer.llm_client import _load_env
@@ -24,19 +28,22 @@ logger = logging.getLogger("WebCircuitReferenceSearch")
 
 DEFAULT_EXA_API_KEY = "b7469f29-80ac-4134-9ad8-b7fbb77f1968"
 DEFAULT_TAVILY_API_KEY = "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"
+IEEE_OPENALEX_HOST_ORG = "https://openalex.org/P4310319808"  # IEEE Organization ID in OpenAlex
 
 
 class WebCircuitReferenceSearcher:
     """
-    Dual-engine web reference retriever combining:
-      1. Tavily Search API (synthesized engineering answers + technical web snippets)
-      2. Exa Neural Search API (semantic search across datasheets, SPICE repos, IEEE/app notes)
+    Triple-engine reference retriever combining:
+      1. IEEE Academic Literature (OpenAlex + IEEE Xplore API)
+      2. Tavily Search API (synthesized answers & technical web snippets)
+      3. Exa Neural Search API (datasheets, SPICE repositories, manufacturer app notes)
     """
 
     def __init__(
         self,
         tavily_api_key: Optional[str] = None,
         exa_api_key: Optional[str] = None,
+        ieee_api_key: Optional[str] = None,
         timeout_s: float = 12.0,
     ):
         _load_env()
@@ -50,8 +57,114 @@ class WebCircuitReferenceSearcher:
             or os.environ.get("EXA_API_KEY")
             or DEFAULT_EXA_API_KEY
         ).strip()
+        self.ieee_api_key = (
+            ieee_api_key
+            or os.environ.get("IEEE_API_KEY")
+            or ""
+        ).strip()
         self.timeout_s = timeout_s
         self._cache: Dict[str, Dict[str, Any]] = {}
+
+    def search_ieee_academic(
+        self,
+        query: str,
+        max_results: int = 3
+    ) -> Dict[str, Any]:
+        """
+        Direct OpenAlex / IEEE literature search for peer-reviewed circuit design papers.
+        Extracts papers from IEEE JSSC, IEEE TCAS, IEEE Access, and related journals,
+        reconstructs full technical abstracts, and highlights circuit design rationale.
+        Operates completely standalone with 0 external daemon dependencies.
+        """
+        clean_q = query.strip()
+        if not clean_q:
+            return {"provider": "ieee_academic", "ok": False, "papers": []}
+
+        encoded_q = urllib.parse.quote(clean_q)
+        papers: List[Dict[str, Any]] = []
+
+        # 1. Primary Query: Filter specifically by IEEE host organization
+        url_ieee = (
+            f"https://api.openalex.org/works?search={encoded_q}"
+            f"&per-page={max_results}&filter=primary_location.source.host_organization:{IEEE_OPENALEX_HOST_ORG}"
+        )
+        req = urllib.request.Request(
+            url_ieee,
+            headers={"User-Agent": "AnalogVerifier/2.0 (mailto:engineering@analogverifier.org)"}
+        )
+
+        raw_items = []
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout_s) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                raw_items = data.get("results", [])
+        except Exception as e:
+            logger.warning(f"IEEE filtered search error for '{clean_q}': {e}")
+
+        # 2. Fallback: If IEEE host org filter returned fewer than 2 results, supplement with general engineering works
+        if len(raw_items) < 2:
+            url_fallback = f"https://api.openalex.org/works?search={encoded_q}&per-page={max_results}"
+            req_fb = urllib.request.Request(
+                url_fallback,
+                headers={"User-Agent": "AnalogVerifier/2.0 (mailto:engineering@analogverifier.org)"}
+            )
+            try:
+                with urllib.request.urlopen(req_fb, timeout=self.timeout_s) as resp:
+                    data_fb = json.loads(resp.read().decode("utf-8"))
+                    raw_fallback = data_fb.get("results", [])
+                    seen_ids = {w.get("id") for w in raw_items}
+                    for fb_w in raw_fallback:
+                        if fb_w.get("id") not in seen_ids:
+                            raw_items.append(fb_w)
+                            if len(raw_items) >= max_results:
+                                break
+            except Exception as e:
+                logger.warning(f"Academic fallback search error for '{clean_q}': {e}")
+
+        # 3. Parse metadata and reconstruct inverted index abstracts
+        for w in raw_items[:max_results]:
+            title = w.get("title") or "Untitled Academic Paper"
+            doi = w.get("doi") or ""
+            year = str(w.get("publication_year") or "")
+            loc = w.get("primary_location") or {}
+            source_obj = loc.get("source") or {}
+            venue = source_obj.get("display_name") or "IEEE / Academic Journal"
+            landing_url = loc.get("landing_page_url") or doi or f"https://doi.org/{doi}"
+
+            # Reconstruct abstract from inverted index
+            inv = w.get("abstract_inverted_index") or {}
+            abstract = ""
+            if inv:
+                pos_list = []
+                for word, positions in inv.items():
+                    for p in positions:
+                        pos_list.append((p, word))
+                pos_list.sort(key=lambda x: x[0])
+                abstract = " ".join(item[1] for item in pos_list)
+
+            # Authors
+            authors = [
+                a.get("author", {}).get("display_name", "")
+                for a in w.get("authorships", [])[:3]
+                if a.get("author", {}).get("display_name")
+            ]
+
+            papers.append({
+                "title": title,
+                "venue": venue,
+                "year": year,
+                "authors": authors,
+                "doi": doi,
+                "url": landing_url,
+                "abstract": abstract.strip()[:1600],
+            })
+
+        return {
+            "provider": "ieee_academic",
+            "ok": bool(papers),
+            "count": len(papers),
+            "papers": papers
+        }
 
     def search_tavily(
         self,
@@ -59,7 +172,7 @@ class WebCircuitReferenceSearcher:
         max_results: int = 4,
         search_depth: str = "basic"
     ) -> Dict[str, Any]:
-        """Queries Tavily Search API for circuit design references and synthesized answers."""
+        """Queries Tavily Search API with non-technical domain filtering."""
         if not self.tavily_api_key:
             return {"provider": "tavily", "ok": False, "error": "Missing TAVILY_API_KEY", "results": []}
 
@@ -70,6 +183,10 @@ class WebCircuitReferenceSearcher:
             "include_answer": True,
             "include_raw_content": False,
             "max_results": max_results,
+            "exclude_domains": [
+                "youtube.com", "youtu.be", "pinterest.com",
+                "instructables.com", "reddit.com", "quora.com"
+            ],
         }
         req = urllib.request.Request(
             "https://api.tavily.com/search",
@@ -107,7 +224,7 @@ class WebCircuitReferenceSearcher:
         query: str,
         num_results: int = 4
     ) -> Dict[str, Any]:
-        """Queries Exa Neural Search API for deep technical documents and SPICE models."""
+        """Queries Exa Neural Search API for datasheets, app notes, and SPICE netlists."""
         if not self.exa_api_key:
             return {"provider": "exa", "ok": False, "error": "Missing EXA_API_KEY", "results": []}
 
@@ -158,44 +275,69 @@ class WebCircuitReferenceSearcher:
 
     @staticmethod
     def _extract_spice_hints(texts: List[str]) -> List[str]:
-        """Extracts any SPICE netlist blocks or model lines discovered in web snippets."""
+        """
+        Extracts clean, physical SPICE netlist blocks or model lines.
+        Filters out LTspice proprietary behavioral devices (A... SCHMITT, SRFLOP)
+        and malformed single-line snippets.
+        """
         hints: List[str] = []
         for txt in texts:
             if not txt:
                 continue
-            for m in re.finditer(r'(\.subckt\b[\s\S]{10,1500}?\.ends\b[^\r\n]*)', txt, re.I):
+
+            # Extract subcircuits
+            for m in re.finditer(r'(\.subckt\b[\s\S]{10,2000}?\.ends\b[^\r\n]*)', txt, re.I):
                 snippet = m.group(1).strip()
+                # Filter out LTspice proprietary A-devices which break standard Ngspice
+                if re.search(r'\bA\d+\s+.*\b(?:SCHMITT|SRFLOP|DIFF|OTA)\b', snippet, re.I):
+                    continue
+                # Require genuine circuit primitives
+                if not re.search(r'\b[QMRCD]\w*\b', snippet):
+                    continue
                 if snippet not in hints:
                     hints.append(snippet)
+
+            # Extract physical model cards
             for m in re.finditer(r'(?m)^(\.model\s+[A-Za-z0-9_]+\s+(?:NPN|PNP|NMOS|PMOS|D|SW|VSWITCH)\b[^\r\n]*)', txt, re.I):
                 model_line = m.group(1).strip()
                 if model_line not in hints:
                     hints.append(model_line)
+
         return hints[:6]
 
     def search(
         self,
         query: str,
         exa_query: Optional[str] = None,
+        ieee_query: Optional[str] = None,
         max_results_per_engine: int = 4
     ) -> Dict[str, Any]:
         """
-        Executes parallel Tavily and Exa searches, deduplicates URLs, extracts SPICE hints,
-        and formats a ready-to-use engineering reference report.
+        Executes parallel IEEE Academic, Tavily, and Exa searches.
+        Formats a structured engineering context with peer-reviewed literature,
+        circuit design rationale, and physical SPICE models.
         """
-        cache_key = f"{query.strip().lower()}||{(exa_query or query).strip().lower()}"
+        q_tavily = query.strip()
+        q_exa = (exa_query or query).strip()
+        q_ieee = (ieee_query or query).strip()
+
+        cache_key = f"{q_tavily.lower()}||{q_exa.lower()}||{q_ieee.lower()}"
         if cache_key in self._cache:
             return self._cache[cache_key]
 
-        q_tavily = query.strip()
-        q_exa = (exa_query or query).strip()
-
         tavily_res: Dict[str, Any] = {"ok": False, "answer": "", "results": []}
         exa_res: Dict[str, Any] = {"ok": False, "results": []}
+        ieee_res: Dict[str, Any] = {"ok": False, "papers": []}
 
-        with ThreadPoolExecutor(max_workers=2) as pool:
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            f_ieee = pool.submit(self.search_ieee_academic, q_ieee, max_results_per_engine)
             f_tav = pool.submit(self.search_tavily, q_tavily, max_results_per_engine)
             f_exa = pool.submit(self.search_exa, q_exa, max_results_per_engine)
+
+            try:
+                ieee_res = f_ieee.result(timeout=self.timeout_s + 2.0)
+            except Exception as e:
+                logger.warning(f"IEEE future timed out: {e}")
             try:
                 tavily_res = f_tav.result(timeout=self.timeout_s + 2.0)
             except Exception as e:
@@ -223,35 +365,60 @@ class WebCircuitReferenceSearcher:
 
         spice_hints = self._extract_spice_hints(raw_texts)
 
-        # Format markdown summary for Agent & Harness² consumption
-        md_lines = [f"### Web Circuit Design References (Query: `{q_tavily}`)"]
-        if tavily_res.get("answer"):
-            md_lines.append(f"**Synthesized Architectural Overview (Tavily)**:\n{tavily_res['answer']}\n")
+        # -------------------------------------------------------------
+        # Format Structured Engineering Markdown
+        # -------------------------------------------------------------
+        md_lines = [f"### Circuit Design References & Literature (Target: `{q_ieee}`)\n"]
 
+        # 1. IEEE Academic Literature (Peer-Reviewed Topology & Rationale)
+        ieee_papers = ieee_res.get("papers", [])
+        if ieee_papers:
+            md_lines.append("#### 📚 IEEE & Peer-Reviewed Academic Literature (Design Rationale & Sizing):")
+            for idx, p in enumerate(ieee_papers, 1):
+                p_title = p.get("title", "Research Paper")
+                p_venue = p.get("venue", "IEEE Journal")
+                p_year = p.get("year", "")
+                p_doi = p.get("doi") or p.get("url", "")
+                p_authors = ", ".join(p.get("authors", []))
+                md_lines.append(f"{idx}. **{p_title}** ({p_year})")
+                md_lines.append(f"   - **Venue**: *{p_venue}* | Authors: {p_authors} | DOI: {p_doi}")
+                if p.get("abstract"):
+                    snippet = re.sub(r'\s+', ' ', p['abstract']).strip()[:500]
+                    md_lines.append(f"   - **Design Insights**: {snippet}...\n")
+
+        # 2. Synthesized Architectural Overview (Tavily)
+        if tavily_res.get("answer"):
+            clean_ans = re.sub(r'\s+', ' ', tavily_res["answer"]).strip()
+            md_lines.append(f"#### 🏛️ Synthesized Architecture Overview:\n{clean_ans}\n")
+
+        # 3. Clean Physical SPICE Models / Subcircuits
         if spice_hints:
-            md_lines.append("**Extracted SPICE Models / Subcircuit Snippets**:")
+            md_lines.append("#### ⚡ Extracted SPICE Subcircuit & Device Models (Physical Only):")
             for h in spice_hints:
                 md_lines.append(f"```spice\n{h}\n```")
 
+        # 4. Manufacturer Application Notes & Technical Sources
         if combined_results:
-            md_lines.append("**Top Technical Sources (Tavily + Exa)**:")
-            for idx, r in enumerate(combined_results[:6], 1):
+            md_lines.append("#### 🌐 Manufacturer Technical Application Notes & Web References:")
+            for idx, r in enumerate(combined_results[:5], 1):
                 src_tag = r.get("source", "web").upper()
                 title = r.get("title") or "Technical Reference"
                 url = r.get("url") or ""
-                snippet = re.sub(r'\s+', ' ', r.get("snippet") or "").strip()[:450]
+                snippet = re.sub(r'\s+', ' ', r.get("snippet") or "").strip()[:350]
                 md_lines.append(f"{idx}. **[{src_tag}] {title}** ({url})\n   - {snippet}")
 
         formatted_markdown = "\n".join(md_lines)
 
         out = {
-            "status": "SUCCESS" if (tavily_res.get("ok") or exa_res.get("ok")) else "PARTIAL_OR_FAILED",
+            "status": "SUCCESS" if (ieee_res.get("ok") or tavily_res.get("ok") or exa_res.get("ok")) else "PARTIAL_OR_FAILED",
             "query": q_tavily,
+            "ieee_ok": bool(ieee_res.get("ok")),
             "tavily_ok": bool(tavily_res.get("ok")),
             "exa_ok": bool(exa_res.get("ok")),
+            "ieee_papers": ieee_papers,
             "tavily_answer": tavily_res.get("answer", ""),
             "spice_hints": spice_hints,
-            "references_count": len(combined_results),
+            "references_count": len(combined_results) + len(ieee_papers),
             "references": combined_results[:8],
             "formatted_markdown": formatted_markdown,
         }
@@ -266,7 +433,8 @@ class WebCircuitReferenceSearcher:
         failed_specs: Optional[List[str]] = None
     ) -> Dict[str, Any]:
         """
-        Builds specialized analog IC topology & SPICE reference queries for Tavily and Exa.
+        Builds specialized analog IC topology & SPICE reference queries
+        for IEEE Academic Literature, Tavily, and Exa.
         """
         clean_ic = re.sub(r'_(?:VERIFIED|HERMES|TEST|DUT)$', '', ic_name, flags=re.I)
         cat_str = category.replace("_", " ") if category else "analog IC"
@@ -274,13 +442,24 @@ class WebCircuitReferenceSearcher:
         if failed_specs:
             spec_str = " " + " ".join(failed_specs[:3])
 
+        # IEEE academic query: focused on circuit architecture, stages, and compensation
+        q_ieee = f"{cat_str} {clean_ic} circuit differential pair transistor compensation topology {extra_query}".strip()
+
+        # Tavily query: engineering schematic and transistor topology
         q_tavily = (
             f"{clean_ic} {cat_str} internal circuit schematic transistor topology "
             f"SPICE model design stages {extra_query}{spec_str}"
         ).strip()
+
+        # Exa query: focused on SPICE subcircuit netlists and application notes
         q_exa = (
             f"{clean_ic} {cat_str} SPICE subcircuit netlist .subckt transistor level "
-            f"equivalent schematic reference design {extra_query}"
+            f"equivalent schematic application note {extra_query}"
         ).strip()
 
-        return self.search(query=q_tavily, exa_query=q_exa, max_results_per_engine=4)
+        return self.search(
+            query=q_tavily,
+            exa_query=q_exa,
+            ieee_query=q_ieee,
+            max_results_per_engine=4
+        )

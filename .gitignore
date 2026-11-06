@@ -62,6 +62,7 @@ uploads/
 
 # E2E run outputs & simulator artefacts
 output_e2e/**/testbenches/
+benchmark_results/**/testbenches/
 benchmark_results/testbench_calibration/**/*.cir
 benchmark_results/testbench_calibration/**/*.raw
 benchmark_results/testbench_calibration/**/*.log
@@ -79,3 +80,8 @@ export_*.py
 .pytest_cache/
 turn_*.txt
 scratch_*
+
+SOUL.md
+memories/
+benchmark_results/zero_blueprint_diverse/
+benchmark_results/gui_e2e_scenarios/
