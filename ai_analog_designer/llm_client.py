@@ -82,6 +82,17 @@ PROVIDERS = {
         "frontier_model": lambda: os.environ.get("LLM_FRONTIER_MODEL", "openai/gpt-6-luna"),
         "supports_json_mode": True,
     },
+    "groq": {
+        "base_url": lambda: os.environ.get("GROQ_BASE_URL", "https://api.groq.com/openai/v1").rstrip("/") + "/chat/completions",
+        "key_env": "GROQ_API_KEY",
+        "default_model": lambda: os.environ.get("LLM_MODEL", "openai/gpt-oss-120b"),
+        "fallback_models": lambda: [m for m in os.environ.get(
+            "LLM_FALLBACK_MODELS", "qwen/qwen3.8-27b,openai/gpt-oss-20b").split(",") if m],
+        "fast_model": lambda: os.environ.get("LLM_FAST_MODEL", "qwen/qwen3.8-27b"),
+        "capable_model": lambda: os.environ.get("LLM_CAPABLE_MODEL", "openai/gpt-oss-120b"),
+        "frontier_model": lambda: os.environ.get("LLM_FRONTIER_MODEL", "openai/gpt-oss-120b"),
+        "supports_json_mode": True,
+    },
 }
 
 
@@ -360,6 +371,7 @@ class LLMClient:
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
             "Accept": "text/event-stream",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         }
         if self.provider == "openrouter":
             headers.update({"HTTP-Referer": "https://github.com/eethsc/analogverifier", "X-Title": "AnalogVerifier"})
@@ -368,6 +380,7 @@ class LLMClient:
         t0 = time.perf_counter()
         ttft = None
         parts: List[str] = []
+        reasoning_parts: List[str] = []
         usage = None
         finish_reason = None
         # socket timeout bounds the wait for each chunk (incl. first token)
@@ -393,7 +406,10 @@ class LLMClient:
                 for ch in obj.get("choices", []) or []:
                     d = ch.get("delta") or {}
                     piece = d.get("content") or ""
-                    if (piece or d.get("reasoning_content") or d.get("reasoning")) and ttft is None:
+                    r_piece = d.get("reasoning_content") or d.get("reasoning") or ""
+                    if r_piece:
+                        reasoning_parts.append(r_piece)
+                    if (piece or r_piece) and ttft is None:
                         ttft = now - t0
                     if piece:
                         parts.append(piece)
@@ -401,6 +417,9 @@ class LLMClient:
                         finish_reason = ch["finish_reason"]
         total = time.perf_counter() - t0
         text = "".join(parts)
+        if not text.strip() and reasoning_parts:
+            # Resilient fallback if reasoning model truncated before emitting formal content
+            text = "".join(reasoning_parts)
         return {
             "text": text,
             "ttft_s": round(ttft if ttft is not None else total, 2),

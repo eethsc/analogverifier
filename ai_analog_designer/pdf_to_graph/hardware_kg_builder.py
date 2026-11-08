@@ -154,16 +154,18 @@ class HardwareKnowledgeGraphBuilder:
                     row["page"] = page_num
             return rows
 
-        with cf.ThreadPoolExecutor(max_workers=1 + self.parallel_spec_calls) as ex:
-            f_pins = ex.submit(self.llm.complete_json, PINS_PROMPT.format(text=pin_text, roles="|".join(ROLES)),
-                               system_prompt=sys_p, max_tokens=6000, tag="hkg_pins", timeout_profile="extraction")
-            for pn in spec_pages:
-                spec_jobs[ex.submit(extract_spec_page, pn)] = pn
+        if self.parallel_spec_calls <= 1:
+            pins_json = self.llm.complete_json(
+                PINS_PROMPT.format(text=pin_text, roles="|".join(ROLES)),
+                system_prompt=sys_p,
+                max_tokens=min(2500, self.spec_max_tokens),
+                tag="hkg_pins",
+                timeout_profile="extraction",
+            )
             completed_pages = 0
-            for f in cf.as_completed(spec_jobs):
-                pn = spec_jobs[f]
+            for pn in spec_pages:
                 try:
-                    spec_rows[pn] = f.result()
+                    spec_rows[pn] = extract_spec_page(pn)
                     completed_pages += 1
                     if progress_callback:
                         progress_callback(completed_pages, len(spec_pages), pn, None)
@@ -173,7 +175,27 @@ class HardwareKnowledgeGraphBuilder:
                     failed_pages.append(failure)
                     if progress_callback:
                         progress_callback(completed_pages, len(spec_pages), pn, failure["error"])
-            pins_json = f_pins.result()
+        else:
+            with cf.ThreadPoolExecutor(max_workers=1 + self.parallel_spec_calls) as ex:
+                f_pins = ex.submit(self.llm.complete_json, PINS_PROMPT.format(text=pin_text, roles="|".join(ROLES)),
+                                   system_prompt=sys_p, max_tokens=min(3000, self.spec_max_tokens), tag="hkg_pins", timeout_profile="extraction")
+                for pn in spec_pages:
+                    spec_jobs[ex.submit(extract_spec_page, pn)] = pn
+                completed_pages = 0
+                for f in cf.as_completed(spec_jobs):
+                    pn = spec_jobs[f]
+                    try:
+                        spec_rows[pn] = f.result()
+                        completed_pages += 1
+                        if progress_callback:
+                            progress_callback(completed_pages, len(spec_pages), pn, None)
+                    except Exception as e:
+                        completed_pages += 1
+                        failure = {"page": pn, "error": str(e)[:300], "attempts": 1}
+                        failed_pages.append(failure)
+                        if progress_callback:
+                            progress_callback(completed_pages, len(spec_pages), pn, failure["error"])
+                pins_json = f_pins.result()
 
         # A first-pass timeout is usually transient provider congestion.  Retry
         # only the affected page, serially, on the frontier tier.  This avoids

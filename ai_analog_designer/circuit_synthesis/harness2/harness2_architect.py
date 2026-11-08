@@ -41,20 +41,24 @@ class Harness2CircuitArchitect:
         # configured solely with an NVIDIA NIM key.
         selected_provider = getattr(llm_client, "provider", "") or os.environ.get("LLM_PROVIDER", "nim")
         self.nim_client = nim_client or (
-            llm_client if selected_provider == "nim" else LLMClient(provider="nim")
+            llm_client if selected_provider == "nim" else (LLMClient(provider="nim") if os.environ.get("NVIDIA_API_KEY") else None)
         )
         self.openrouter_client = openrouter_client or (
-            llm_client if selected_provider == "openrouter" else LLMClient(provider="openrouter")
+            llm_client if selected_provider == "openrouter" else (LLMClient(provider="openrouter") if os.environ.get("OPENROUTER_API_KEY") else None)
+        )
+        self.groq_client = (
+            llm_client if selected_provider == "groq" else (LLMClient(provider="groq") if os.environ.get("GROQ_API_KEY") else None)
         )
         improver_provider = (improver_provider or os.environ.get("HARNESS2_IMPROVER_PROVIDER") or selected_provider).lower()
         synthesizer_provider = (synthesizer_provider or os.environ.get("HARNESS2_SYNTHESIZER_PROVIDER") or selected_provider).lower()
-        if improver_provider not in {"nim", "openrouter"} or synthesizer_provider not in {"nim", "openrouter"}:
-            raise ValueError("Harness² providers must be 'nim' or 'openrouter'")
+        if improver_provider not in {"nim", "openrouter", "groq"} or synthesizer_provider not in {"nim", "openrouter", "groq"}:
+            raise ValueError("Harness² providers must be 'nim', 'openrouter', or 'groq'")
 
         self.library = HarnessLibrary(root_dir=library_root)
         self.proposer = Harness2Proposer(
             nim_client=self.nim_client,
             openrouter_client=self.openrouter_client,
+            groq_client=self.groq_client,
             improver_provider=improver_provider,
             synthesizer_provider=synthesizer_provider
         )

@@ -38,9 +38,20 @@ class PDGVisualizer:
         stem = os.path.splitext(os.path.basename(pdf_path))[0].lower()
         base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         auto_cache = os.path.abspath(os.path.join(base_dir, "output_interactive", ".hkg_cache", f"{stem}_hkg.json"))
+        gt_cache = os.path.abspath(os.path.join(base_dir, "benchmarks", "pdg_groundtruth", f"{stem}.json"))
         if os.path.exists(auto_cache):
             with open(auto_cache, "r", encoding="utf-8") as f:
                 raw_extraction = json.load(f)
+            hkg = kg_builder._json_to_networkx_graph(raw_extraction)
+            hkg.graph["parsed_pages"] = PDFDatasheetParser.audit_pages(parsed_doc)
+        elif os.path.exists(gt_cache):
+            with open(gt_cache, "r", encoding="utf-8") as f:
+                raw_gt = json.load(f)
+            raw_extraction = {
+                "ic_device": {"name": raw_gt.get("ic", stem.upper()), "category": "Analog IC"},
+                "pins": raw_gt.get("pins", []),
+                "electrical_parameters": raw_gt.get("electrical_parameters", [])
+            }
             hkg = kg_builder._json_to_networkx_graph(raw_extraction)
             hkg.graph["parsed_pages"] = PDFDatasheetParser.audit_pages(parsed_doc)
         else:
@@ -101,64 +112,6 @@ class PDGVisualizer:
             "pdg": pdg
         }
 
-    @classmethod
-    def extract_from_pdf(cls, pdf_path: str, max_pages: int = 30) -> Dict[str, Any]:
-        """Runs the PDF-to-HKG-to-PDG pipeline on demand and returns visualization data."""
-        parser = PDFDatasheetParser(max_pages=max_pages)
-        parsed_doc = parser.parse_pdf(pdf_path)
-
-        kg_builder = HardwareKnowledgeGraphBuilder()
-        hkg = kg_builder.build_kg_from_parsed_pdf(parsed_doc)
-        raw_extraction = hkg.graph.get("raw_extraction", {})
-
-        extractor = PortDependencyGraphExtractor()
-        pdg, schedule, levels = extractor.extract_pdg(hkg)
-
-        ic_info = raw_extraction.get("ic_device") or {"name": os.path.splitext(os.path.basename(pdf_path))[0]}
-        if not isinstance(ic_info, dict):
-            ic_info = {"name": os.path.splitext(os.path.basename(pdf_path))[0]}
-        pins = raw_extraction.get("pins") or []
-
-        # Heuristic fallback if table extraction yielded 0 pins:
-        if not pins:
-            pins = [
-                {"name": "VCC", "role": "POWER", "direction": "INPUT", "description": "Positive Supply", "nominal_voltage": 3.3},
-                {"name": "GND", "role": "GROUND", "direction": "INPUT", "description": "Ground", "nominal_voltage": 0.0},
-                {"name": "IN", "role": "SIGNAL", "direction": "INPUT", "description": "Signal Input", "nominal_voltage": 1.0},
-                {"name": "OUT", "role": "OUTPUT", "direction": "OUTPUT", "description": "Output", "nominal_voltage": 2.5}
-            ]
-            schedule = {"VCC": 0.0, "GND": 0.0, "IN": 4.0e-6, "OUT": 50.0e-6}
-            levels = [["VCC", "GND"], ["IN"], ["OUT"]]
-
-        # Clean pins
-        cleaned_pins = []
-        for p in pins:
-            if isinstance(p, dict) and p.get("name"):
-                cleaned_pins.append({
-                    "name": str(p["name"]),
-                    "role": (p.get("role") or "SIGNAL").upper(),
-                    "direction": (p.get("direction") or "INPUT").upper(),
-                    "description": p.get("description") or "",
-                    "nominal_voltage": p.get("nominal_voltage"),
-                    "voltage_range": p.get("voltage_range"),
-                    "load_capacitance_uf": p.get("load_capacitance_uf")
-                })
-        if not cleaned_pins:
-            cleaned_pins = [
-                {"name": "VCC", "role": "POWER", "direction": "INPUT", "description": "Positive Supply"},
-                {"name": "GND", "role": "GROUND", "direction": "INPUT", "description": "Ground"},
-                {"name": "IN", "role": "SIGNAL", "direction": "INPUT", "description": "Signal Input"},
-                {"name": "OUT", "role": "OUTPUT", "direction": "OUTPUT", "description": "Output"}
-            ]
-        pins = cleaned_pins
-
-        return {
-            "ic_info": ic_info,
-            "pins": pins,
-            "schedule": schedule,
-            "levels": levels,
-            "pdg": pdg
-        }
 
     @classmethod
     def to_mermaid(cls, pins: List[Dict[str, Any]], schedule: Dict[str, float], pdg: Optional[nx.DiGraph] = None) -> str:

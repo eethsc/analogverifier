@@ -149,7 +149,7 @@ NVIDIA NIM API(`integrate.api.nvidia.com`) 환경에서 실제 소형(SLM)부터
 | 시스템 프롬프트의 JSON 예제 중괄호 이스케이프 | `hermes_core/hermes_agent.py` | Python f-string의 `Invalid format specifier` 런타임 오류 제거 |
 | Hermes에 클라이언트 기본 모델을 명시 모델로 고정하지 않음 | `hermes_core/hermes_agent.py` | 턴 태그 기반 스케줄러가 실제로 작동 |
 | Hermes 초기 턴에도 frontier 최후 폴백 제공 | `llm_client.py` | 작은 모델의 일시 장애가 전체 합성을 즉시 중단시키지 않음 |
-| Harness²가 OpenRouter를 강제하지 않고 앱 LLM provider 재사용 | `circuit_synthesis/harness2/harness2_architect.py` | NVIDIA NIM 실행 시 다른 provider의 인증 오류 방지 |
+| Harness²가 OpenRouter를 강제하지 않고 앱 LLM provider 재사용 | `circuit_synthesis/harness2/harness2_architect.py` | Groq, NVIDIA NIM, OpenRouter 간 원활한 연동 및 인증 오류 방지 |
 
 ### 운영 설정 예시
 
@@ -464,7 +464,7 @@ analogverifier/
 │   │   ├── web_reference_search.py      # IEEE + Tavily + Exa 병렬 웹 회로 레퍼런스 및 학술 논문 검색기
 │   │   ├── harness_hermes_tuner.py      # Harness²(C1~C8) ➔ Hermes 워크스페이스 튜닝 & 양방향 동기화
 │   │   └── hermes_workflow.py           # Hermes 폐루프 자율 합성 워크플로우 러너
-│   ├── llm_client.py                    # Provider 공용 LLM 클라이언트 (NVIDIA NIM / OpenRouter)
+│   ├── llm_client.py                    # Provider 공용 LLM 클라이언트 (Groq / NVIDIA NIM / OpenRouter)
 │   ├── pdf_to_graph/                    # [Phase 1 & 2] ParseBench 기반 데이터시트 파싱 및 PDG 추출
 │   ├── circuit_synthesis/               # [Phase 3] 순수 물리 아날로그 회로 합성 및 문법/모델 정화기
 │   ├── neuro_symbolic_verifier/         # [Phase 4 & 5] PDG 4단계 인과 검증기 및 Verifier Harness²
@@ -507,27 +507,23 @@ pip install -r requirements.txt playwright
 
 - **환경 변수 설정 (`.env`)**:
   ```ini
-  LLM_PROVIDER=nim
-  NVIDIA_API_KEY="your_nvidia_nim_api_key"
+  # === 옵션 1: Groq 고속 추론 엔드포인트 (400+ tok/s 초고속 & 120B 추론 모델) ===
+  LLM_PROVIDER=groq
+  GROQ_API_KEY="your_groq_api_key"
+  LLM_EXTRACT_MODEL=qwen/qwen3.8-27b
+  LLM_SYNTH_MODEL=openai/gpt-oss-120b
+  LLM_HERMES_MODEL=openai/gpt-oss-120b
+  HKG_PARALLEL_SPEC_CALLS=1
+  HKG_SPEC_MAX_TOKENS=2500
+  LLM_MIN_INTERVAL_S=1.0
+
+  # === 옵션 2: NVIDIA NIM 엔드포인트 ===
+  # LLM_PROVIDER=nim
+  # NVIDIA_API_KEY="your_nvidia_nim_api_key"
+
+  # 공통 검색 API (선택 사항)
   TAVILY_API_KEY="your_tavily_api_key"
   EXA_API_KEY="your_exa_api_key"
-
-  # Optional: the default adaptive scheduler uses fast models for table
-  # extraction and reserves the frontier model for late Hermes repairs.
-  # LLM_SCHEDULER=adaptive
-  # LLM_FAST_MODEL=deepseek-ai/deepseek-v4.1-flash
-  # LLM_CAPABLE_MODEL=z-ai/glm-5.3-flash
-  # LLM_FRONTIER_MODEL=nvidia/nemotron-3-ultra-550b-a55b
-  # LLM_HERMES_ESCALATE_AFTER=3
-
-  # Datasheet table extraction is deliberately conservative: two primary
-  # pages run in parallel, then only a timed-out page is retried on frontier.
-  # These are optional reliability controls, not required API keys.
-  # HKG_PARALLEL_SPEC_CALLS=2
-  # HKG_SPEC_PAGE_RETRIES=1
-  # LLM_EXTRACT_FAST_TIMEOUT_S=55
-  # LLM_EXTRACT_CAPABLE_TIMEOUT_S=110
-  # LLM_EXTRACT_FRONTIER_TIMEOUT_S=210
   ```
 - **인터랙티브 Web Studio 실행**:
   ```powershell
