@@ -106,10 +106,13 @@ class HermesAnalogWorkflowRunner:
             for p in pins
         ])
 
+        top_specs = specifications[:10]
         specs_summary = "\n".join([
-            f"  - Parameter '{s['symbol']}': Min={s.get('min')}, Typ={s.get('typ')}, Max={s.get('max')} {s.get('unit', '')} | Conditions: {s.get('test_conditions', '')}"
-            for s in specifications
+            f"  - Parameter '{s.get('symbol') or s.get('name')}': Min={s.get('min')}, Typ={s.get('typ')}, Max={s.get('max')} {s.get('unit', '')} | Conditions: {s.get('test_conditions', '')}"
+            for s in top_specs
         ])
+        if len(specifications) > 10:
+            specs_summary += f"\n  - ... and {len(specifications) - 10} additional electrical parameters."
 
         schedule_summary = "\n".join([
             f"  - Pin {p:10s} activation: {t*1e6:.2f} us"
@@ -139,7 +142,9 @@ The subcircuit must operate with its negative supply pin tied to 0 V (single sup
                 category=category
             )
             if web_res and web_res.get("formatted_markdown"):
-                web_ref_section = f"\n## IEEE ACADEMIC LITERATURE & CIRCUIT DESIGN REFERENCES:\n{web_res['formatted_markdown']}\n"
+                raw_md = web_res["formatted_markdown"]
+                trimmed_md = raw_md[:1200] + ("\n... [references truncated]" if len(raw_md) > 1200 else "")
+                web_ref_section = f"\n## IEEE ACADEMIC LITERATURE & CIRCUIT DESIGN REFERENCES:\n{trimmed_md}\n"
                 logger.info(
                     f"Retrieved {web_res.get('references_count', 0)} circuit references "
                     f"(IEEE={web_res.get('ieee_ok')}, Tavily={web_res.get('tavily_ok')}, Exa={web_res.get('exa_ok')}) for {part_name}"

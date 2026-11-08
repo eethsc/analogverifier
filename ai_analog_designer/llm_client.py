@@ -155,7 +155,7 @@ class LLMBudgetExceeded(Exception):
 # intentionally granular so an operator can tune one expensive stage without
 # accidentally moving every other call to the same model.
 TASK_MODEL_ENV = [
-    ("hkg", "LLM_EXTRACT_MODEL"),
+    ("hkg_specs", "LLM_EXTRACT_MODEL"),
     ("hermes", "LLM_HERMES_MODEL"),
     ("harness2_synth", "LLM_SYNTH_MODEL"),
     ("synth", "LLM_SYNTH_MODEL"),
@@ -493,7 +493,14 @@ class LLMClient:
                         continue
                     if e.code in (401, 403, 404):
                         break  # model unavailable for this key -> next model
-                    time.sleep((8 if e.code == 429 else 2) * attempt)
+                    wait_s = 2 * attempt
+                    if e.code == 429:
+                        m_wait = re.search(r"try again in ([0-9.]+)s", body)
+                        if m_wait:
+                            wait_s = min(float(m_wait.group(1)) + 0.5, 20.0)
+                        else:
+                            wait_s = min(8.0 * attempt, 20.0)
+                    time.sleep(wait_s)
                 except LLMBudgetExceeded:
                     raise
                 except Exception as e:

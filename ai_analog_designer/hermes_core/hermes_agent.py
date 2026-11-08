@@ -364,10 +364,16 @@ CRITICAL: NEVER use ellipses, placeholders, or undefined X-subcircuit stubs in t
         """Executes a single conversational turn in the Hermes loop."""
         sys_prompt = self.compile_system_prompt()
 
-        # Build native conversation messages to prevent single-string monologue hallucination
+        # Build native conversation messages with sliding window to stay safely within token quota
         native_messages = [{"role": "system", "content": sys_prompt}]
-        for msg in self.messages:
-            native_messages.append({"role": msg["role"], "content": msg["content"]})
+        if len(self.messages) <= 4:
+            for msg in self.messages:
+                native_messages.append({"role": msg["role"], "content": msg["content"]})
+        else:
+            # Preserve initial task instruction + most recent turns
+            native_messages.append({"role": self.messages[0]["role"], "content": self.messages[0]["content"]})
+            for msg in self.messages[-3:]:
+                native_messages.append({"role": msg["role"], "content": msg["content"]})
 
         logger.info(f"Hermes Agent executing turn {turn_idx}...")
         resp_text = self.llm_client.complete(
@@ -412,7 +418,8 @@ CRITICAL: NEVER use ellipses, placeholders, or undefined X-subcircuit stubs in t
         tool_calls = self.router.intercept_and_guardrail(
             proposed_calls=tool_calls,
             state_decision=state_decision,
-            has_extracted_netlist=bool(current_nl)
+            has_extracted_netlist=bool(current_nl),
+            current_netlist=current_nl
         )
 
         tool_outputs = []
@@ -437,6 +444,8 @@ CRITICAL: NEVER use ellipses, placeholders, or undefined X-subcircuit stubs in t
                         args = json.loads(args)
                     except Exception:
                         args = {}
+                if isinstance(args, dict) and not args.get("netlist") and current_nl and name in ("verify_circuit_pdg_gate", "validate_netlist_syntax"):
+                    args["netlist"] = current_nl
 
                 logger.info(f"Hermes invoking tool: '{name}'")
                 output = self.tools.dispatch(name, args)

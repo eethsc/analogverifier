@@ -101,7 +101,7 @@ class HardwareKnowledgeGraphBuilder:
 
     def __init__(self, llm_client: Optional[LLMClient] = None, max_spec_pages: int = 10, parallel_spec_calls: int = 2):
         self.llm = llm_client or LLMClient()
-        self.max_spec_pages = max_spec_pages
+        self.max_spec_pages = max(1, int(os.environ.get("HKG_MAX_SPEC_PAGES", str(max_spec_pages))))
         # Three in-flight calls (two table pages plus pin extraction) stay
         # below the provider's four-request global cap.  The old value of six
         # made seven pages contend at once, then all hit their TTFT deadlines.
@@ -228,9 +228,18 @@ class HardwareKnowledgeGraphBuilder:
         if spec_pages and not specs_json["electrical_parameters"]:
             raise HKGExtractionError(spec_pages, failed_pages)
 
+        raw_pins = pins_json.get("pins") or pins_json.get("pin_interface") or []
+        cleaned_pins = []
+        for p in raw_pins:
+            if isinstance(p, dict):
+                p_copy = dict(p)
+                if not p_copy.get("name") and p_copy.get("pin_name"):
+                    p_copy["name"] = p_copy["pin_name"]
+                cleaned_pins.append(p_copy)
+
         data = {
             "ic_device": pins_json.get("ic_device") or {"name": ic_guess, "category": "ANALOG"},
-            "pins": pins_json.get("pins") or [],
+            "pins": cleaned_pins,
             "port_dependencies": pins_json.get("port_dependencies") or [],
             "functional_blocks": pins_json.get("functional_blocks") or [],
             "electrical_parameters": [],

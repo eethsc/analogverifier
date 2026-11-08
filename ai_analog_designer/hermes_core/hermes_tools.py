@@ -229,8 +229,17 @@ class HermesAnalogTools:
         else:
             return {"error": f"Unknown tool: '{tool_name}'"}
 
-    def validate_netlist_syntax(self, netlist: str, subckt_name: Optional[str] = None) -> Dict[str, Any]:
+    def validate_netlist_syntax(self, netlist: str = "", subckt_name: Optional[str] = None, **kwargs) -> Dict[str, Any]:
         """Executes NetlistValidator."""
+        if not netlist or not netlist.strip():
+            return {
+                "is_valid": False,
+                "errors": ["Empty netlist string."],
+                "warnings": [],
+                "device_counts": {},
+                "cleaned_netlist": "",
+                "guardrail_status": "FAIL_SYNTAX_OR_GUARDRAIL"
+            }
         target_name = (subckt_name or self.dut_name).upper()
         res = self.validator.validate(netlist, expected_subckt_name=target_name, expected_pins=self.pins)
         return {
@@ -242,8 +251,18 @@ class HermesAnalogTools:
             "guardrail_status": "PASS" if res.get("is_valid") else "FAIL_SYNTAX_OR_GUARDRAIL"
         }
 
-    def verify_circuit_pdg_gate(self, netlist: str, tag: str = "hermes_eval") -> Dict[str, Any]:
+    def verify_circuit_pdg_gate(self, netlist: str = "", tag: str = "hermes_eval", **kwargs) -> Dict[str, Any]:
         """Runs the 4-stage causal gate verifier."""
+        if not netlist or not netlist.strip():
+            return {
+                "status": "REJECTED_EMPTY_NETLIST",
+                "pass_rate_percent": 0.0,
+                "unique_kind_pass_rate_pct": 0.0,
+                "passed_specs": 0,
+                "failed_specs": len(self.specifications),
+                "errors": ["No netlist provided to verify_circuit_pdg_gate."],
+                "diagnostic_feedback": "Cannot verify empty netlist."
+            }
         # 1. First run syntax validation
         val_res = self.validate_netlist_syntax(netlist)
         cleaned_netlist = val_res.get("cleaned_netlist", netlist)

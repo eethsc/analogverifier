@@ -150,7 +150,8 @@ class ToolDecisionRouter:
         self,
         proposed_calls: List[Dict[str, Any]],
         state_decision: Dict[str, Any],
-        has_extracted_netlist: bool
+        has_extracted_netlist: bool,
+        current_netlist: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """
         Guards against invalid actions:
@@ -161,9 +162,12 @@ class ToolDecisionRouter:
         if not proposed_calls:
             # If agent emitted no tool calls but emitted a netlist, auto-inject the recommended tool
             if has_extracted_netlist:
+                args = {"tag": "auto_routed_jev"}
+                if current_netlist and state_decision["selected_tool"] in ("verify_circuit_pdg_gate", "validate_netlist_syntax"):
+                    args["netlist"] = current_netlist
                 return [{
                     "name": state_decision["selected_tool"],
-                    "arguments": {"tag": "auto_routed_jev"}
+                    "arguments": args
                 }]
             return proposed_calls
 
