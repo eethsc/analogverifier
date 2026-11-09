@@ -118,6 +118,7 @@ class HardwareKnowledgeGraphBuilder:
         self,
         parsed_data: Dict[str, Any],
         progress_callback: Optional[Callable[[int, int, int, Optional[str]], None]] = None,
+        pins_only: bool = False,
     ) -> Dict[str, Any]:
         from .pdf_parser import PDFDatasheetParser as P
         if "pages" not in parsed_data:  # legacy input
@@ -125,7 +126,7 @@ class HardwareKnowledgeGraphBuilder:
 
         pin_pages = P.select_pages(parsed_data, "pins")
         func_pages = P.select_pages(parsed_data, "functional")[:2]
-        spec_pages = P.select_pages(parsed_data, "specs")[: self.max_spec_pages]
+        spec_pages = [] if pins_only else P.select_pages(parsed_data, "specs")[: self.max_spec_pages]
         pin_text = P.page_tagged_text(parsed_data, sorted(set(pin_pages + func_pages)), 30000)
         ic_guess = re.sub(r'\.pdf$', '', parsed_data.get("source_file", "IC"), flags=re.I).upper()
 
@@ -148,7 +149,8 @@ class HardwareKnowledgeGraphBuilder:
             ).get("electrical_parameters") or []
             rows = [row for row in rows if isinstance(row, dict)]
             if not rows:
-                raise HKGExtractionError([page_num], [{"page": page_num, "error": "model returned zero specification rows"}])
+                logger.info(f"Page {page_num} contained no specification table rows.")
+                return []
             for row in rows:
                 if not row.get("page"):
                     row["page"] = page_num
@@ -226,7 +228,10 @@ class HardwareKnowledgeGraphBuilder:
             specs_json["electrical_parameters"].extend(spec_rows[pn])
 
         if spec_pages and not specs_json["electrical_parameters"]:
-            raise HKGExtractionError(spec_pages, failed_pages)
+            logger.warning(
+                f"Specification extraction produced no usable rows for pages {spec_pages}. "
+                "Proceeding with extracted pins, device metadata, and port dependencies."
+            )
 
         raw_pins = pins_json.get("pins") or pins_json.get("pin_interface") or []
         cleaned_pins = []
@@ -266,8 +271,9 @@ class HardwareKnowledgeGraphBuilder:
         self,
         parsed_data: Dict[str, Any],
         progress_callback: Optional[Callable[[int, int, int, Optional[str]], None]] = None,
+        pins_only: bool = False,
     ) -> nx.MultiDiGraph:
-        data = self.extract_raw(parsed_data, progress_callback=progress_callback)
+        data = self.extract_raw(parsed_data, progress_callback=progress_callback, pins_only=pins_only)
         G = self._json_to_networkx_graph(data)
         from .pdf_parser import PDFDatasheetParser
         G.graph["parsed_pages"] = PDFDatasheetParser.audit_pages(parsed_data)

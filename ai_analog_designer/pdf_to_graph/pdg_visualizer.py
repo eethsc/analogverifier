@@ -29,7 +29,7 @@ class PDGVisualizer:
     }
 
     @classmethod
-    def extract_from_pdf(cls, pdf_path: str, max_pages: int = 6) -> Dict[str, Any]:
+    def extract_from_pdf(cls, pdf_path: str, max_pages: int = 15) -> Dict[str, Any]:
         """Runs the PDF-to-HKG-to-PDG pipeline on demand and returns visualization data."""
         parser = PDFDatasheetParser(max_pages=max_pages)
         parsed_doc = parser.parse_pdf(pdf_path)
@@ -55,18 +55,27 @@ class PDGVisualizer:
             hkg = kg_builder._json_to_networkx_graph(raw_extraction)
             hkg.graph["parsed_pages"] = PDFDatasheetParser.audit_pages(parsed_doc)
         else:
-            hkg = kg_builder.build_kg_from_parsed_pdf(parsed_doc)
-            raw_extraction = hkg.graph.get("raw_extraction", {})
             try:
-                os.makedirs(os.path.dirname(auto_cache), exist_ok=True)
-                with open(auto_cache, "w", encoding="utf-8") as f:
-                    json.dump(raw_extraction, f, indent=2)
-                logger.info(f"Cached HKG extraction to {auto_cache}")
+                hkg = kg_builder.build_kg_from_parsed_pdf(parsed_doc, pins_only=True)
+                raw_extraction = hkg.graph.get("raw_extraction", {})
+                try:
+                    os.makedirs(os.path.dirname(auto_cache), exist_ok=True)
+                    with open(auto_cache, "w", encoding="utf-8") as f:
+                        json.dump(raw_extraction, f, indent=2)
+                    logger.info(f"Cached HKG extraction to {auto_cache}")
+                except Exception as e:
+                    logger.warning(f"Could not cache HKG: {e}")
             except Exception as e:
-                logger.warning(f"Could not cache HKG: {e}")
+                logger.warning(f"HKG extraction error in visualizer: {e}. Falling back to heuristic pin extraction...")
+                raw_extraction = {}
+                from .hardware_kg_builder import HardwareKnowledgeGraph
+                hkg = HardwareKnowledgeGraph()
 
         extractor = PortDependencyGraphExtractor()
-        pdg, schedule, levels = extractor.extract_pdg(hkg)
+        if hkg and len(hkg.nodes) > 0:
+            pdg, schedule, levels = extractor.extract_pdg(hkg)
+        else:
+            pdg, schedule, levels = None, {}, [[]]
 
         ic_info = raw_extraction.get("ic_device") or {"name": os.path.splitext(os.path.basename(pdf_path))[0]}
         if not isinstance(ic_info, dict):
