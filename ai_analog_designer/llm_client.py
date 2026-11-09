@@ -455,6 +455,10 @@ class LLMClient:
             if prompt:
                 messages_payload.append({"role": "user", "content": prompt})
 
+        if self.provider == "groq":
+            groq_cap = int(os.environ.get("GROQ_MAX_TOKENS", "2048"))
+            max_tokens = min(max_tokens, groq_cap)
+
         budget = float(os.environ.get("LLM_BUDGET_USD", "0") or 0)
         if budget and _SPENT_USD[0] >= budget:
             raise LLMBudgetExceeded(f"LLM budget exhausted: spent ${_SPENT_USD[0]:.3f} >= LLM_BUDGET_USD=${budget}")
@@ -491,6 +495,11 @@ class LLMClient:
                         # some models reject json mode; retry without it
                         response_format = None
                         continue
+                    if e.code == 413:
+                        # Request too large (TPM limit exceeded due to prompt + max_tokens upfront reservation)
+                        if payload.get("max_tokens", 0) > 1024:
+                            payload["max_tokens"] = 1024
+                            continue
                     if e.code in (401, 403, 404):
                         break  # model unavailable for this key -> next model
                     wait_s = 2 * attempt
@@ -554,6 +563,9 @@ class LLMClient:
         tag: str = "",
         timeout_profile: str = "default",
     ) -> Dict[str, Any]:
+        if self.provider == "groq":
+            groq_cap = int(os.environ.get("GROQ_MAX_TOKENS", "2048"))
+            max_tokens = min(max_tokens, groq_cap)
         json_sys_prompt = (system_prompt or "") + "\n\nCRITICAL: Respond ONLY with a valid JSON object. Do NOT enclose in markdown formatting or backticks."
         # Transport fallback alone is insufficient for extraction: a fast model
         # can answer successfully yet emit unusable JSON.  In that case retry on

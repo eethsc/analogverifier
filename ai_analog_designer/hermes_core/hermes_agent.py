@@ -366,13 +366,13 @@ CRITICAL: NEVER use ellipses, placeholders, or undefined X-subcircuit stubs in t
 
         # Build native conversation messages with sliding window to stay safely within token quota
         native_messages = [{"role": "system", "content": sys_prompt}]
-        if len(self.messages) <= 4:
+        if len(self.messages) <= 3:
             for msg in self.messages:
                 native_messages.append({"role": msg["role"], "content": msg["content"]})
         else:
-            # Preserve initial task instruction + most recent turns
+            # Preserve initial task instruction + most recent 2 turns
             native_messages.append({"role": self.messages[0]["role"], "content": self.messages[0]["content"]})
-            for msg in self.messages[-3:]:
+            for msg in self.messages[-2:]:
                 native_messages.append({"role": msg["role"], "content": msg["content"]})
 
         logger.info(f"Hermes Agent executing turn {turn_idx}...")
@@ -382,7 +382,7 @@ CRITICAL: NEVER use ellipses, placeholders, or undefined X-subcircuit stubs in t
             messages=native_messages,
             model=self.model,
             temperature=self.temperature,
-            max_tokens=8192,
+            max_tokens=2048,
             tag=f"hermes_turn_{turn_idx}"
         )
         logger.info(f"[Hermes Turn {turn_idx} Raw Response]:\n{resp_text}")
@@ -431,8 +431,11 @@ CRITICAL: NEVER use ellipses, placeholders, or undefined X-subcircuit stubs in t
             tool_calls=tool_calls
         )
 
-        # Append assistant response to messages
-        self.messages.append({"role": "assistant", "content": resp_text})
+        # Store compact assistant response in history to avoid huge monologues exceeding TPM limits
+        stored_resp = resp_text
+        if len(stored_resp) > 1500 and "<spice_netlist>" not in stored_resp:
+            stored_resp = stored_resp[:1200] + "\n... [analysis monologue trimmed for context limits]"
+        self.messages.append({"role": "assistant", "content": stored_resp})
 
         # Execute any requested tool calls
         if tool_calls:
@@ -475,8 +478,14 @@ CRITICAL: NEVER use ellipses, placeholders, or undefined X-subcircuit stubs in t
 
             turn_result.tool_outputs = tool_outputs
             # Append tool outputs to conversation messages for next turn
+            def _format_tool_output(out: Any) -> str:
+                s = json.dumps(out, indent=2) if isinstance(out, (dict, list)) else str(out)
+                if len(s) > 1200:
+                    return s[:1200] + "\n... [output truncated for brevity]"
+                return s
+
             tool_feedback = "\n\n".join([
-                f"<tool_output name=\"{o['tool']}\">\n{json.dumps(o['output'], indent=2)}\n</tool_output>"
+                f"<tool_output name=\"{o['tool']}\">\n{_format_tool_output(o['output'])}\n</tool_output>"
                 for o in tool_outputs
             ])
 
