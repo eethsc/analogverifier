@@ -126,14 +126,44 @@ class ToolDecisionRouter:
                 "Repetition trap broken: manage_memory called consecutively. Forcing circuit synthesis."
             )
 
-        # Rule 5: Default state -> synthesize and verify
+        # Rule 5: Ambiguous / mid-loop state -> use LLM probabilistic policy evaluation blended with Bayesian prior
         probs["verify_circuit_pdg_gate"] = 0.60
         probs["validate_netlist_syntax"] = 0.20
         probs["retrieve_subcircuit_blueprint"] = 0.10
         probs["manage_memory"] = 0.10
+        reason = "Standard iterative synthesis cycle."
+
+        if os.environ.get("ANALOG_ENABLE_LLM_ROUTER", "1") == "1" and os.environ.get("ANALOG_DISABLE_LLM_PLANNER") != "1":
+            try:
+                from ..llm_client import LLMClient
+                llm = LLMClient(role="fast")
+                if getattr(llm, "provider", "none") != "none":
+                    prompt = (
+                        "You are a System-1 probabilistic tool router for an analog IC synthesis agent.\n"
+                        f"DUT: {self.dut_name}, Turn: {turn_idx}, PassRate: {pass_rate}%, HasNetlist: {has_netlist}, "
+                        f"SyntaxValid: {syntax_valid}, RecentTools: {history_tool_names[-4:]}, UnmetSpecs: {unmet_specs_count}.\n"
+                        f"Available tools: {self.SUPPORTED_TOOLS}\n"
+                        "Return JSON: {\"probabilities\": {<tool>: float, ...}, \"reason\": \"...\"}"
+                    )
+                    res = llm.complete_json(
+                        prompt,
+                        system="Return only valid JSON with tool probability distribution.",
+                        temperature=0.0,
+                        max_tokens=300,
+                        stage="probabilistic_tool_router",
+                    )
+                    if isinstance(res, dict) and isinstance(res.get("probabilities"), dict):
+                        llm_p = res["probabilities"]
+                        for t in self.SUPPORTED_TOOLS:
+                            if isinstance(llm_p.get(t), (int, float)) and float(llm_p[t]) >= 0:
+                                probs[t] = 0.5 * probs[t] + 0.5 * float(llm_p[t])
+                        if res.get("reason"):
+                            reason = str(res["reason"])
+            except Exception:
+                pass
 
         best_tool = max(probs, key=probs.get)
-        return self._format_decision(best_tool, probs, "Standard iterative synthesis cycle.")
+        return self._format_decision(best_tool, probs, reason)
 
     def _format_decision(self, selected_tool: str, probs: Dict[str, float], reason: str) -> Dict[str, Any]:
         # Normalize probabilities

@@ -1,15 +1,14 @@
 """
-Spec planner: turns extracted datasheet spec rows into a deterministic MEASUREMENT PLAN.
+Spec planner: turns extracted datasheet spec rows into a MEASUREMENT PLAN.
 
-For each ELECTRICAL spec row it decides
-  - the device class of the DUT (op-amp, comparator, timer, ...),
-  - which pins play which role in the fixture (IN+, IN-, OUT, V+, V-, ...),
-  - the measurement *kind* (vos, ib, aol_db, gbw, ...) and the fixture conditions (VS, RL, IOUT, ...),
-  - or why the row cannot be measured (NOT_TESTABLE_CONDITION / UNSUPPORTED_KIND / TEMPERATURE_RANGE).
-
-Nothing here calls an LLM. The mapping is explicit so that coverage can be reported honestly.
+Combines fast structural priors with LLM-based probabilistic semantic inference
+to classify device topology, map arbitrary datasheet pin names to fixture roles
+(IN+, IN-, OUT, V+, V-, etc.), and map electrical specification rows + test conditions
+into canonical SPICE verification fixtures without brittle regex failures.
 """
+import os
 import re
+import json
 import hashlib
 from typing import Dict, Any, List, Optional, Tuple
 
@@ -74,19 +73,35 @@ def _channel(n: str) -> str:
 
 def map_pins(device_class: str, pins: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Maps datasheet pins to fixture roles. Returns {'vpos','vneg','gnd','channels':[{'inp','inn','out'}], ...}."""
-    roles: Dict[str, Any] = {"vpos": None, "vneg": None, "channels": [], "other": []}
+    roles: Dict[str, Any] = {
+        "vpos": None,
+        "vneg": None,
+        "channels": [],
+        "other": [],
+        "pin_order": [p["name"] for p in pins if p.get("name")],
+    }
     ins, outs = [], []
     for p in pins:
         node = p["name"]
         raw = _norm(p.get("raw_name") or p["name"])
         role = str(p.get("role") or "").upper()
-        if role == "NC":
+        if role == "NC" or re.fullmatch(r"NC\d*|NO_CONNECT.*|N/?C", raw):
             continue
-        if re.fullmatch(r"V\+|VCC|VDD|VS|V\+?S|VIN|INPUT|V\+_?|VP|VPOS|VCC\+", raw) or (role == "POWER" and re.search(r"\+|CC|DD|^VS$|^VIN$|^INPUT$", raw)):
-            roles["vpos"] = roles["vpos"] or node
-            continue
-        if re.fullmatch(r"V-|VEE|VSS|GND|V-/GND|GND/V-|VN|VNEG|ANODE|V_N|GND_V_N|V_N_GND", raw) or role == "GROUND" or (role == "POWER" and re.search(r"-|EE|SS|_N$", raw)):
+        # Check negative supply / ground FIRST so VCC_N or VCC- is never mistaken for positive VCC
+        is_neg_rail = (
+            re.fullmatch(r"V-|VEE|VSS|GND|V-/GND|GND/V-|VN|VNEG|ANODE|V_N|GND_V_N|V_N_GND|VCC-|VCC_N|VDD-|VDD_N|VS-|VS_N|AVSS|PVSS|PGND|AGND", raw)
+            or role == "GROUND"
+            or (role == "POWER" and re.search(r"[-–]|EE|SS|_N$|\bNEG", raw))
+        )
+        if is_neg_rail:
             roles["vneg"] = roles["vneg"] or node
+            continue
+        is_pos_rail = (
+            re.fullmatch(r"V\+|VCC|VDD|VS|V\+?S|VIN|INPUT|V\+_?|VP|VPOS|VCC\+|VCC_P|VDD\+|VDD_P|VS\+|VS_P|V_P|AVDD|PVDD", raw)
+            or (role == "POWER" and re.search(r"\+|_P$|CC|DD|^VS$|^VIN$|^INPUT$|\bPOS", raw) and not re.search(r"[-–]|_N$|EE|SS", raw))
+        )
+        if is_pos_rail:
+            roles["vpos"] = roles["vpos"] or node
             continue
         entry = {"node": node, "raw": raw, "role": role}
         if device_class in ("opamp", "comparator", "inamp", "audio_amp"):
@@ -109,7 +124,7 @@ def map_pins(device_class: str, pins: List[Dict[str, Any]]) -> Dict[str, Any]:
             elif pol == "N":
                 chans[ch]["inn"] = e["node"]
         # A channel with one known polarity and a leftover input: the leftover is the other polarity
-        # (covers pin names such as "IN1" / "1IN" that carry no +/- suffix).
+        # (covers pin names such as "IN1" / "1IN" or "IN" / "IN_P" that carry no +/- suffix on one pin).
         leftovers: Dict[str, List[Dict[str, str]]] = {}
         for e in ins:
             if _polarity(e["raw"]) is None:
@@ -131,6 +146,17 @@ def map_pins(device_class: str, pins: List[Dict[str, Any]]) -> Dict[str, Any]:
                 merged.update(c)
             chans = {"1": merged}
         roles["channels"] = [c for _, c in sorted(chans.items()) if {"inp", "inn", "out"} <= set(c)]
+        # Soft fallback if channels is still empty but we have at least 2 inputs and 1 output
+        if not roles["channels"] and len(ins) >= 2 and len(outs) >= 1:
+            inp_cand = next((e["node"] for e in ins if _polarity(e["raw"]) == "P"), None)
+            inn_cand = next((e["node"] for e in ins if _polarity(e["raw"]) == "N"), None)
+            rem = [e["node"] for e in ins if e["node"] not in (inp_cand, inn_cand)]
+            if not inp_cand and rem:
+                inp_cand = rem.pop(0)
+            if not inn_cand and rem:
+                inn_cand = rem.pop(0)
+            if inp_cand and inn_cand:
+                roles["channels"] = [{"inp": inp_cand, "inn": inn_cand, "out": outs[0]["node"]}]
     elif device_class == "inamp":
         ch = {}
         for e in ins:
@@ -138,6 +164,11 @@ def map_pins(device_class: str, pins: List[Dict[str, Any]]) -> Dict[str, Any]:
             if pol == "P":
                 ch["inp"] = e["node"]
             elif pol == "N":
+                ch["inn"] = e["node"]
+        for e in ins:
+            if "inp" not in ch and e["node"] != ch.get("inn"):
+                ch["inp"] = e["node"]
+            elif "inn" not in ch and e["node"] != ch.get("inp"):
                 ch["inn"] = e["node"]
         if outs:
             ch["out"] = outs[0]["node"]
@@ -154,6 +185,11 @@ def map_pins(device_class: str, pins: List[Dict[str, Any]]) -> Dict[str, Any]:
             if pol == "P":
                 ch["inp"] = e["node"]
             elif pol == "N":
+                ch["inn"] = e["node"]
+        for e in ins:
+            if "inp" not in ch and e["node"] != ch.get("inn"):
+                ch["inp"] = e["node"]
+            elif "inn" not in ch and e["node"] != ch.get("inp"):
                 ch["inn"] = e["node"]
         if outs:
             ch["out"] = outs[0]["node"]
@@ -176,11 +212,11 @@ def map_pins(device_class: str, pins: List[Dict[str, Any]]) -> Dict[str, Any]:
         s = {}
         for p in pins:
             raw = _norm(p.get("raw_name") or p["name"])
-            if "CATHODE" in raw or raw in ("K", "CATH"):
+            if "CATHODE" in raw or raw in ("K", "CATH", "VKA"):
                 s["cathode"] = p["name"]
             elif "REF" in raw:
                 s["ref"] = p["name"]
-            elif "ANODE" in raw or raw == "A":
+            elif "ANODE" in raw or raw in ("A", "GND"):
                 s["anode"] = p["name"]
         roles["shunt"] = s
         roles["vneg"] = s.get("anode")
@@ -188,7 +224,7 @@ def map_pins(device_class: str, pins: List[Dict[str, Any]]) -> Dict[str, Any]:
         l = {}
         for p in pins:
             raw = _norm(p.get("raw_name") or p["name"])
-            if re.search(r"ADJ", raw):
+            if re.search(r"ADJ|GND", raw):
                 l["adj"] = p["name"]
             elif re.search(r"OUT", raw):
                 l["out"] = p["name"]
@@ -364,13 +400,164 @@ def default_vs(device_class: str, specs: List[Dict[str, Any]]) -> float:
             "audio_amp": 6.0}.get(device_class, 5.0)
 
 
+_KIND_META: Dict[str, Tuple[str, bool]] = {
+    kind: (unit, mag) for _, _, _, kind, unit, mag in KIND_RULES
+}
+
+
+def _needs_llm_pin_refinement(device_class: str, pin_map: Dict[str, Any], pins: List[Dict[str, Any]]) -> bool:
+    if not pins:
+        return False
+    if device_class in ("opamp", "comparator", "inamp", "audio_amp"):
+        if not pin_map.get("vpos") or not pin_map.get("vneg") or not pin_map.get("channels"):
+            return True
+    elif device_class == "timer":
+        t = pin_map.get("timer") or {}
+        if not {"trig", "thres", "out"} <= set(t):
+            return True
+    elif device_class == "shunt_ref":
+        s = pin_map.get("shunt") or {}
+        if not {"cathode", "ref", "anode"} <= set(s):
+            return True
+    elif device_class == "ldo":
+        l = pin_map.get("ldo") or {}
+        if not {"in", "out", "adj"} <= set(l):
+            return True
+    return False
+
+
+def _llm_probabilistic_plan(
+    ic_info: Dict[str, Any],
+    pins: List[Dict[str, Any]],
+    specs: List[Dict[str, Any]],
+    prior_class: str,
+    prior_pin_map: Dict[str, Any],
+    prior_items: List[Dict[str, Any]],
+) -> Tuple[str, Dict[str, Any], Dict[int, Dict[str, Any]]]:
+    """
+    Uses LLM probabilistic semantic inference to:
+      1. Infer/refine device_class and map arbitrary pin names to fixture roles (vpos, vneg, channels, etc.)
+      2. Probabilistically classify unmatched/ambiguous electrical specification rows into canonical fixture kinds
+         and parse non-standard test condition strings into numeric fixture parameters.
+    Never raises an exception; falls back seamlessly to prior values.
+    """
+    if os.environ.get("ANALOG_DISABLE_LLM_PLANNER") == "1":
+        return prior_class, prior_pin_map, {}
+
+    need_pins = _needs_llm_pin_refinement(prior_class, prior_pin_map, pins)
+    unmapped_specs = [
+        {
+            "spec_index": it["spec_index"],
+            "symbol": it.get("symbol"),
+            "name": it.get("name"),
+            "unit": it.get("unit"),
+            "min": it.get("min"),
+            "typ": it.get("typ"),
+            "max": it.get("max"),
+            "test_conditions": it.get("test_conditions"),
+        }
+        for it in prior_items
+        if str(it.get("category") or "ELECTRICAL").upper() == "ELECTRICAL"
+        and it.get("status") != "PLANNED"
+        and any(it.get(k) is not None for k in ("min", "typ", "max"))
+    ]
+
+    if not need_pins and not unmapped_specs:
+        return prior_class, prior_pin_map, {}
+
+    try:
+        from ..llm_client import LLMClient
+        llm = LLMClient(role="fast")
+        if getattr(llm, "provider", "none") == "none":
+            return prior_class, prior_pin_map, {}
+
+        compact_pins = [
+            {
+                "name": p.get("name"),
+                "raw_name": p.get("raw_name"),
+                "role": p.get("role"),
+                "description": str(p.get("description") or "")[:80],
+            }
+            for p in pins
+        ]
+        allowed_kinds = sorted(_KIND_META.keys())
+        prompt = (
+            "You are a probabilistic neuro-symbolic analog IC verification planner.\n"
+            f"IC Metadata: {json.dumps(ic_info, ensure_ascii=False)}\n"
+            f"Prior device_class: {prior_class}\n"
+            f"Extracted Pins: {json.dumps(compact_pins, ensure_ascii=False)}\n"
+            f"Prior Pin Map: {json.dumps({k: v for k, v in prior_pin_map.items() if k != 'other'}, ensure_ascii=False)}\n"
+            f"Unmapped Electrical Specs (up to 25): {json.dumps(unmapped_specs[:25], ensure_ascii=False)}\n\n"
+            "Tasks:\n"
+            "1. Determine `device_class` from: ['opamp', 'comparator', 'timer', 'shunt_ref', 'ldo', 'audio_amp', 'inamp'].\n"
+            "2. Map exact pin `name` values from Extracted Pins into `pin_map`:\n"
+            "   - `vpos`: positive supply pin name (e.g. VCC, VCC_P, V+, VDD)\n"
+            "   - `vneg`: negative supply or ground pin name (e.g. VEE, VCC_N, V-, GND, VSS)\n"
+            "   - `channels`: list of `{\"inp\": <non-inverting input pin name>, \"inn\": <inverting input pin name>, \"out\": <output pin name>}`\n"
+            "3. For each item in `Unmapped Electrical Specs` that is a testable electrical parameter, probabilistically map it to one of "
+            f"`allowed_kinds`: {allowed_kinds} (or null if genuinely untestable like drift/THD/package resistance), and extract numeric "
+            "conditions (`vs` in V [if +/-15V then 30.0], `rl` in Ohm, `cl` in F, `iout` in A, `freq` in Hz, `rail` in ['pos','neg']).\n\n"
+            "Return ONLY valid JSON:\n"
+            "{\n"
+            "  \"device_class\": \"opamp\",\n"
+            "  \"pin_map\": {\"vpos\": \"...\", \"vneg\": \"...\", \"channels\": [{\"inp\": \"...\", \"inn\": \"...\", \"out\": \"...\"}]},\n"
+            "  \"spec_mappings\": [{\"spec_index\": 0, \"kind\": \"vos\", \"conditions\": {\"vs\": 30.0, \"rl\": 2000.0}}]\n"
+            "}"
+        )
+        res = llm.complete_json(
+            prompt,
+            system="Return only valid JSON matching the requested schema.",
+            temperature=0.0,
+            max_tokens=1024,
+            stage="probabilistic_spec_planner",
+        )
+        if not isinstance(res, dict):
+            return prior_class, prior_pin_map, {}
+
+        valid_classes = {"opamp", "comparator", "timer", "shunt_ref", "ldo", "audio_amp", "inamp"}
+        new_class = str(res.get("device_class") or prior_class).lower().strip()
+        if new_class not in valid_classes:
+            new_class = prior_class
+
+        valid_pin_names = {p.get("name") for p in pins if p.get("name")}
+        llm_pm = res.get("pin_map") or {}
+        merged_pm = dict(prior_pin_map)
+        if isinstance(llm_pm, dict):
+            if not merged_pm.get("vpos") and llm_pm.get("vpos") in valid_pin_names:
+                merged_pm["vpos"] = llm_pm["vpos"]
+            if not merged_pm.get("vneg") and llm_pm.get("vneg") in valid_pin_names:
+                merged_pm["vneg"] = llm_pm["vneg"]
+            if not merged_pm.get("channels") and isinstance(llm_pm.get("channels"), list):
+                clean_ch = []
+                for ch in llm_pm["channels"]:
+                    if isinstance(ch, dict) and {"inp", "inn", "out"} <= set(ch):
+                        if ch["inp"] in valid_pin_names and ch["inn"] in valid_pin_names and ch["out"] in valid_pin_names:
+                            clean_ch.append({"inp": ch["inp"], "inn": ch["inn"], "out": ch["out"]})
+                if clean_ch:
+                    merged_pm["channels"] = clean_ch
+
+        spec_overrides: Dict[int, Dict[str, Any]] = {}
+        for sm in res.get("spec_mappings") or []:
+            if not isinstance(sm, dict):
+                continue
+            s_idx = sm.get("spec_index")
+            k = sm.get("kind")
+            if isinstance(s_idx, int) and isinstance(k, str) and k in _KIND_META:
+                spec_overrides[s_idx] = {
+                    "kind": k,
+                    "conditions": sm.get("conditions") if isinstance(sm.get("conditions"), dict) else {},
+                }
+        return new_class, merged_pm, spec_overrides
+    except Exception:
+        return prior_class, prior_pin_map, {}
+
+
 def build_plan(ic_info: Dict[str, Any], pins: List[Dict[str, Any]], specs: List[Dict[str, Any]]) -> Dict[str, Any]:
     device_class = detect_device_class(ic_info, pins)
     pin_map = map_pins(device_class, pins)
     elec = [s for s in specs if str(s.get("category") or "ELECTRICAL").upper() == "ELECTRICAL"]
     vs_default = default_vs(device_class, elec)
     items = []
-    seen_keys: Dict[Tuple, int] = {}
     for idx, s in enumerate(specs):
         kind, unit, mag, status = classify_spec(device_class, s)
         cond = parse_conditions(s.get("test_conditions") or "")
@@ -378,7 +565,33 @@ def build_plan(ic_info: Dict[str, Any], pins: List[Dict[str, Any]], specs: List[
                 "min": s.get("min"), "typ": s.get("typ"), "max": s.get("max"), "unit": s.get("unit"),
                 "test_conditions": s.get("test_conditions"), "kind": kind, "canonical_unit": unit, "magnitude": mag,
                 "status": status, "conditions": cond, "note": ""}
-        if status == "PLANNED":
+        items.append(item)
+
+    # Invoke LLM probabilistic planner to refine pin mappings and recover unmapped electrical specs
+    device_class, pin_map, spec_overrides = _llm_probabilistic_plan(
+        ic_info, pins, specs, device_class, pin_map, items
+    )
+    for idx, ov in spec_overrides.items():
+        if 0 <= idx < len(items) and items[idx]["status"] != "PLANNED":
+            k = ov["kind"]
+            unit, mag = _KIND_META[k]
+            items[idx]["kind"] = k
+            items[idx]["canonical_unit"] = unit
+            items[idx]["magnitude"] = mag
+            items[idx]["status"] = "PLANNED"
+            llm_cond = ov.get("conditions") or {}
+            for ck in ("vs", "rl", "cl", "iout", "freq", "vo", "vid", "rail", "state"):
+                if llm_cond.get(ck) is not None and ck not in items[idx]["conditions"]:
+                    try:
+                        items[idx]["conditions"][ck] = float(llm_cond[ck]) if ck not in ("rail", "state") else str(llm_cond[ck])
+                    except (ValueError, TypeError):
+                        pass
+
+    seen_keys: Dict[Tuple, int] = {}
+    for item in items:
+        if item["status"] == "PLANNED":
+            cond = item["conditions"]
+            kind = item["kind"]
             if cond.get("temp_range"):
                 item["note"] = "Full-temperature-range limit evaluated at 25C only (necessary, not sufficient)."
             vs = cond.get("vs", vs_default)
@@ -396,7 +609,6 @@ def build_plan(ic_info: Dict[str, Any], pins: List[Dict[str, Any]], specs: List[
             key = (kind, tuple(sorted((k, v) for k, v in item["fixture"].items() if v is not None)))
             item["fixture_key"] = f"{kind}_{hashlib.md5(repr(key).encode()).hexdigest()[:6]}"
             seen_keys[key] = seen_keys.get(key, 0) + 1
-        items.append(item)
     planned = [i for i in items if i["status"] == "PLANNED"]
     return {"device_class": device_class, "pin_map": pin_map, "vs_default": vs_default, "items": items,
             "summary": {"total_rows": len(items), "electrical_rows": len(elec), "planned": len(planned),

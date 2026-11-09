@@ -1,4 +1,6 @@
+import os
 import re
+import json
 import networkx as nx
 from typing import Dict, List, Any, Tuple, Optional
 
@@ -92,6 +94,91 @@ class PortDependencyGraphExtractor:
             return d, f"5 tau of GBW ({timing['bandwidth_mhz']:.3g}MHz)", timing["sources"]["bandwidth_mhz"]
         return self.DEFAULT_DELTAS_US["TO_OUTPUT"], "Default output settling (no datasheet timing)", None
 
+    def _llm_infer_pdg_edges_and_delays(
+        self,
+        raw: Dict[str, Any],
+        active_pins: List[Tuple[str, str, Dict[str, Any]]],
+        prior_timing: Dict[str, Any],
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        """
+        Uses LLM probabilistic reasoning to infer causal Port Dependency Graph (PDG) edges
+        and realistic physical settling delays (in us) when explicit datasheet edges or timing specs
+        are sparse or non-standard.
+        """
+        if not active_pins or os.environ.get("ANALOG_DISABLE_LLM_PLANNER") == "1":
+            return [], prior_timing
+
+        existing_deps = raw.get("port_dependencies") or []
+        if len(existing_deps) >= len(active_pins) and any(
+            prior_timing.get(k) for k in ("turnon_settling_us", "propagation_delay_us", "slew_rate_v_us", "bandwidth_mhz")
+        ):
+            return [], prior_timing
+
+        try:
+            from ..llm_client import LLMClient
+            llm = LLMClient(role="fast")
+            if getattr(llm, "provider", "none") == "none":
+                return [], prior_timing
+
+            ic_meta = raw.get("ic_metadata") or {}
+            compact_pins = [
+                {"name": pname, "role": role, "desc": str((pdata or {}).get("description") or "")[:70]}
+                for pname, role, pdata in active_pins
+            ]
+            compact_specs = [
+                {
+                    "symbol": s.get("symbol"),
+                    "name": s.get("name"),
+                    "typ": s.get("typ"),
+                    "max": s.get("max"),
+                    "unit": s.get("unit"),
+                }
+                for s in (raw.get("electrical_parameters") or [])[:20]
+                if isinstance(s, dict)
+            ]
+            prompt = (
+                "You are an expert analog IC causal Port Dependency Graph (PDG) analyzer.\n"
+                f"IC Metadata: {json.dumps(ic_meta, ensure_ascii=False)}\n"
+                f"Active Pins: {json.dumps(compact_pins, ensure_ascii=False)}\n"
+                f"Sample Specs: {json.dumps(compact_specs, ensure_ascii=False)}\n\n"
+                "Infer the causal port dependency edges (ordered from POWER/GROUND -> BIAS/REFERENCE -> CONTROL/ENABLE -> SIGNAL/INPUT -> OUTPUT) "
+                "and realistic physical settling delays in microseconds (`delay_us`).\n"
+                "Return ONLY valid JSON:\n"
+                "{\n"
+                "  \"timing_estimates\": {\"turnon_settling_us\": float_or_null, \"propagation_delay_us\": float_or_null, \"slew_rate_v_us\": float_or_null, \"bandwidth_mhz\": float_or_null},\n"
+                "  \"edges\": [\n"
+                "    {\"source\": \"<pin_name>\", \"target\": \"<pin_name>\", \"dependency_type\": \"POWER_FEED|SIGNAL_PATH|TO_SIGNAL|TO_CONTROL|POWER_TO_BIAS\", \"delay_us\": 10.0, \"condition\": \"...\"}\n"
+                "  ]\n"
+                "}"
+            )
+            res = llm.complete_json(
+                prompt,
+                system="Return only valid JSON with causal PDG edges and timing estimates.",
+                temperature=0.0,
+                max_tokens=800,
+                stage="probabilistic_pdg_inference",
+            )
+            if not isinstance(res, dict):
+                return [], prior_timing
+
+            merged_timing = dict(prior_timing)
+            merged_timing["sources"] = dict(prior_timing.get("sources") or {})
+            te = res.get("timing_estimates") or {}
+            if isinstance(te, dict):
+                for tk in ("turnon_settling_us", "propagation_delay_us", "slew_rate_v_us", "bandwidth_mhz"):
+                    if merged_timing.get(tk) is None and isinstance(te.get(tk), (int, float)) and float(te[tk]) > 0:
+                        merged_timing[tk] = float(te[tk])
+                        merged_timing["sources"][tk] = "llm_probabilistic_inference"
+
+            valid_names = {p[0] for p in active_pins}
+            inferred_edges = []
+            for e in res.get("edges") or []:
+                if isinstance(e, dict) and e.get("source") in valid_names and e.get("target") in valid_names:
+                    inferred_edges.append(e)
+            return inferred_edges, merged_timing
+        except Exception:
+            return [], prior_timing
+
     def extract_pdg(self, hkg: nx.MultiDiGraph) -> Tuple[nx.DiGraph, Dict[str, float], List[List[str]]]:
         timing = self.extract_timing_specs_from_hkg(hkg)
         raw = hkg.graph.get("raw_extraction", {})
@@ -110,6 +197,7 @@ class PortDependencyGraphExtractor:
             pdg.add_node(pname, role=role, data=pdata)
         active = [p for p in pins if p[1] != "NC"]
 
+        llm_edges, timing = self._llm_infer_pdg_edges_and_delays(raw, active, timing)
         out_delay, out_cond, out_src = self._output_delay(timing)
 
         def add(u, v, delay_us, dep_type, cond, origin, delay_source=None):
@@ -131,6 +219,22 @@ class PortDependencyGraphExtractor:
                     delay, dsrc = self.DEFAULT_DELTAS_US["TO_SIGNAL"], None
                 add(src, tgt, delay, dep.get("dependency_type", "DEPENDS_ON"),
                     dep.get("condition") or "Datasheet dependency", "datasheet", dsrc)
+
+        # 1b. LLM-inferred probabilistic causal dependencies (for edges not already present)
+        for dep in llm_edges:
+            src, tgt = dep.get("source"), dep.get("target")
+            if src in pdg and tgt in pdg and src != tgt and not pdg.has_edge(src, tgt):
+                d = dep.get("delay_us")
+                delay = float(d) if isinstance(d, (int, float)) and d > 0 else out_delay
+                add(
+                    src,
+                    tgt,
+                    delay,
+                    str(dep.get("dependency_type") or "DEPENDS_ON"),
+                    str(dep.get("condition") or "LLM probabilistic causal inference"),
+                    "llm_probabilistic",
+                    "llm_probabilistic_inference",
+                )
 
         # 2. Precedence-rule completion — only where the datasheet layer left a pin without any driver
         lvl = lambda r: self.ROLE_PRECEDENCE.get(r, 3)

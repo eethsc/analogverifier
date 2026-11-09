@@ -139,12 +139,59 @@ class BlueprintReranker:
             return []
 
         scored = []
-        for cand in candidates:
+        for idx, cand in enumerate(candidates):
             score, details = self.score_candidate(cand, query=query)
             item = dict(cand)
             item["rerank_score"] = score
             item["rerank_details"] = details
+            item["_idx"] = idx
             scored.append(item)
+
+        # Optional LLM probabilistic semantic reranking blended with physical SPICE viability prior
+        if len(scored) > 1 and os.environ.get("ANALOG_ENABLE_LLM_RERANKER", "1") == "1" and os.environ.get("ANALOG_DISABLE_LLM_PLANNER") != "1":
+            try:
+                import json
+                from ..llm_client import LLMClient
+                llm = LLMClient(role="fast")
+                if getattr(llm, "provider", "none") != "none":
+                    briefs = [
+                        {
+                            "idx": it["_idx"],
+                            "title": it.get("title") or it.get("file") or f"candidate_{it['_idx']}",
+                            "snippet": str(it.get("content") or "")[:240],
+                            "prior_score": it["rerank_score"],
+                        }
+                        for it in scored[:10]
+                    ]
+                    prompt = (
+                        "You are an analog IC topology reranker. Score each candidate blueprint in [0.0, 1.0] "
+                        f"for semantic and topological compatibility with target DUT='{self.target_dut}', "
+                        f"category='{self.target_category}', pins={self.target_pins}, query='{query}'.\n"
+                        f"Candidates: {json.dumps(briefs, ensure_ascii=False)}\n"
+                        "Return JSON: {\"scores\": {\"0\": 0.85, ...}}"
+                    )
+                    res = llm.complete_json(
+                        prompt,
+                        system="Return only valid JSON with candidate index scores in [0.0, 1.0].",
+                        temperature=0.0,
+                        max_tokens=300,
+                        stage="probabilistic_blueprint_reranker",
+                    )
+                    llm_scores = (res or {}).get("scores") if isinstance(res, dict) else None
+                    if isinstance(llm_scores, dict):
+                        for it in scored:
+                            raw_s = llm_scores.get(str(it["_idx"]))
+                            if isinstance(raw_s, (int, float)):
+                                llm_val = min(1.0, max(0.0, float(raw_s)))
+                                blended = round(0.65 * it["rerank_score"] + 0.35 * llm_val, 4)
+                                it["rerank_details"]["llm_semantic"] = round(llm_val, 3)
+                                it["rerank_details"]["composite"] = blended
+                                it["rerank_score"] = blended
+            except Exception:
+                pass
+
+        for it in scored:
+            it.pop("_idx", None)
 
         # Sort descending by composite score
         scored.sort(key=lambda x: x["rerank_score"], reverse=True)

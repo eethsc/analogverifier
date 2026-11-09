@@ -296,30 +296,168 @@ class PDFDatasheetParser:
         return sec
 
     @staticmethod
-    def select_pages(parsed: Dict[str, Any], purpose: str) -> List[int]:
-        """Selects the page numbers relevant for a given extraction purpose."""
-        pages = {int(k): v for k, v in parsed["pages"].items()}
-        want = {
-            "pins": ["pin_configuration"],
-            "specs": ["abs_max", "recommended", "electrical", "esd", "thermal"],
-            "functional": ["functional"],
-        }[purpose]
-        sel = [pn for pn in sorted(pages) if any(c in pages[pn]["classes"] for c in want)]
+    def _prior_score_page(pn: int, pg: Dict[str, Any], purpose: str, table_pages: set) -> float:
+        """Calculates a soft prior relevance score for a page when LLM selection is unavailable or combined."""
+        text = (pg.get("text") or "")
+        lower = text.lower()
+        cls = set(pg.get("classes") or [])
+        if "toc" in cls:
+            return -10.0
+
+        score = 0.0
+        has_table = pn in table_pages
+        if purpose == "pins":
+            if "pin_configuration" in cls:
+                score += 10.0
+            if re.search(r"\b(pin\s+configuration|pin\s+functions|terminal\s+functions|pinout|pin\s+assignments?|connection\s+diagram)\b", lower):
+                score += 8.0
+            if re.search(r"\b(pin\s*no|pin\s*name|i/o|description)\b", lower):
+                score += 5.0
+            if pn <= 6:
+                score += 3.0
+            if has_table:
+                score += 2.0
+        elif purpose == "specs":
+            # Strictly prioritize actual Electrical / Parametric / Switching Characteristics over Abs Max / Thermal
+            if "electrical" in cls:
+                score += 20.0
+            if re.search(r"\b(electrical\s+characteristics|dc\s+characteristics|ac\s+characteristics|switching\s+characteristics|operating\s+characteristics)\b", lower):
+                score += 15.0
+            if re.search(r"\bparameter\b", lower) and re.search(r"\b(min|typ|max)\b", lower):
+                score += 12.0
+            unit_hits = len(re.findall(r"\b(mv|ua|na|ma|db|mhz|khz|v/us|ns|us|mohm|kohm)\b", lower))
+            score += min(10.0, unit_hits * 0.5)
+            if has_table:
+                score += 4.0
+            if "typical characteristics" in lower[:450] and "electrical characteristics" not in lower[:450]:
+                score -= 12.0
+            if "recommended" in cls and "electrical" not in cls:
+                score += 4.0
+            if "abs_max" in cls and "electrical" not in cls:
+                score += 2.0
+            if ("thermal" in cls or "esd" in cls) and "electrical" not in cls:
+                score += 0.5
+        elif purpose == "functional":
+            if "functional" in cls:
+                score += 10.0
+            if re.search(r"\b(functional\s+block|schematic|detailed\s+description|theory\s+of\s+operation|application)\b", lower):
+                score += 6.0
+        return score
+
+    @classmethod
+    def _llm_rank_pages(cls, parsed: Dict[str, Any]) -> Dict[str, List[int]]:
+        """Uses an LLM probabilistic classifier over compact page digests to select the best pages
+        for 'pins', 'specs' (prioritizing Electrical Characteristics tables), and 'functional'."""
+        cache = parsed.get("_llm_page_selection")
+        if isinstance(cache, dict) and cache:
+            return cache
+
+        pages = {int(k): v for k, v in (parsed.get("pages") or {}).items()}
+        if not pages or os.environ.get("ANALOG_DISABLE_LLM_PLANNER") == "1":
+            return {}
+
+        try:
+            from ..llm_client import LLMClient
+            llm = LLMClient(role="fast")
+            if getattr(llm, "provider", "none") == "none":
+                return {}
+
+            table_pages = {int(t.get("page", 0)) for t in (parsed.get("tables") or []) if t.get("page")}
+            digests = []
+            for pn in sorted(pages)[:35]:
+                txt = (pages[pn].get("text") or "").strip()
+                if not txt:
+                    continue
+                lines = [ln.strip() for ln in txt.splitlines() if ln.strip()]
+                head = " | ".join(lines[:6])[:260]
+                unit_cnt = len(re.findall(r"\b(mV|uA|nA|mA|dB|MHz|kHz|V/us|ns|us|kOhm|Ohm)\b", txt, re.I))
+                digests.append({
+                    "page": pn,
+                    "has_table": pn in table_pages,
+                    "unit_density": unit_cnt,
+                    "prior_tags": pages[pn].get("classes", []),
+                    "header_snippet": head,
+                })
+
+            if not digests:
+                return {}
+
+            prompt = (
+                "You are an expert analog IC datasheet analyzer. Given compact page digests from a PDF datasheet, "
+                "probabilistically select and rank the best page numbers for each extraction purpose:\n"
+                "1. 'pins': Pages containing Pin Configuration, Pin Functions, Terminal Assignments, or Connection Diagrams.\n"
+                "2. 'specs': Pages containing testable **Electrical Characteristics** / Parametric Specification tables "
+                "(with Parameter, Test Conditions, Min/Typ/Max, Units). Put actual Electrical Characteristics pages FIRST, "
+                "before Recommended Operating Conditions or Absolute Maximum Ratings. Exclude TOC, graphs-only ('Typical Characteristics'), and package outlines.\n"
+                "3. 'functional': Pages with Functional Block Diagram, Simplified Schematic, or Detailed Circuit Description.\n\n"
+                f"Page digests:\n{json.dumps(digests, ensure_ascii=False)}\n\n"
+                "Return JSON with keys: {\"pins\": [int, ...], \"specs\": [int, ...], \"functional\": [int, ...]} ordered from highest probability/relevance to lowest."
+            )
+            data = llm.complete_json(
+                prompt,
+                system="Return only valid JSON with integer page lists ranked by relevance.",
+                temperature=0.0,
+                max_tokens=600,
+                stage="pdf_page_selection",
+            )
+            if isinstance(data, dict):
+                valid_pns = set(pages.keys())
+                res = {}
+                for k in ("pins", "specs", "functional"):
+                    raw_list = data.get(k) or []
+                    if isinstance(raw_list, list):
+                        clean = []
+                        for x in raw_list:
+                            try:
+                                val = int(x)
+                                if val in valid_pns and val not in clean:
+                                    clean.append(val)
+                            except (ValueError, TypeError):
+                                pass
+                        res[k] = clean
+                parsed["_llm_page_selection"] = res
+                return res
+        except Exception:
+            pass
+        return {}
+
+    @classmethod
+    def select_pages(cls, parsed: Dict[str, Any], purpose: str) -> List[int]:
+        """Selects and ranks the page numbers relevant for a given extraction purpose using
+        LLM probabilistic page ranking combined with structural density priors."""
+        pages = {int(k): v for k, v in (parsed.get("pages") or {}).items()}
+        if not pages:
+            return []
+
+        table_pages = {int(t.get("page", 0)) for t in (parsed.get("tables") or []) if t.get("page")}
+        scored = [(cls._prior_score_page(pn, pages[pn], purpose, table_pages), pn) for pn in sorted(pages)]
+        prior_ranked = [pn for sc, pn in sorted(scored, key=lambda x: (-x[0], x[1])) if sc > 0]
+
         if purpose == "specs":
+            # Include continuation pages immediately following high-confidence electrical pages
             extra = []
-            for pn in sel:
+            for pn in list(prior_ranked):
                 nxt = pn + 1
-                if nxt in pages and nxt not in sel and "electrical" in pages[pn]["classes"]:
-                    t = pages[nxt]["text"].lower()
-                    if ("(continued)" in t or ("parameter" in t and ("min" in t and "max" in t))) \
+                if nxt in pages and nxt not in prior_ranked and "electrical" in (pages[pn].get("classes") or []):
+                    t = (pages[nxt].get("text") or "").lower()
+                    if ("(continued)" in t or ("parameter" in t and ("min" in t or "typ" in t or "max" in t))) \
                             and "typical characteristics" not in t[:400]:
                         extra.append(nxt)
-            sel = sorted(set(sel + extra))
-        if not sel:
-            sel = [pn for pn in sorted(pages)][:4 if purpose == "pins" else 10]
-        if purpose == "pins" and 1 not in sel:
-            sel = [1] + sel
-        return sel
+            for e in extra:
+                if e not in prior_ranked:
+                    prior_ranked.append(e)
+
+        llm_sel = cls._llm_rank_pages(parsed).get(purpose) or []
+        merged: List[int] = []
+        for pn in llm_sel + prior_ranked:
+            if pn in pages and pn not in merged:
+                merged.append(pn)
+
+        if not merged:
+            merged = [pn for pn in sorted(pages)][:4 if purpose == "pins" else 10]
+        if purpose == "pins" and 1 in pages and 1 not in merged:
+            merged = [1] + merged
+        return merged
 
     @staticmethod
     def audit_pages(parsed: Dict[str, Any]) -> Dict[int, str]:

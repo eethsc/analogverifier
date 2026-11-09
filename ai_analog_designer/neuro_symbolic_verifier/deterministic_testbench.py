@@ -28,9 +28,9 @@ from .units import spec_limits_in, fmt
 def subckt_header(netlist: str, dut_name: Optional[str] = None) -> Tuple[str, List[str]]:
     """Returns (name, pins) of the DUT subcircuit: the one called `dut_name`, else the LAST .subckt in the
     file (helper/vendor subcircuits are defined before the top-level wrapper)."""
-    heads = re.findall(r"^\s*\.subckt\s+(\S+)\s+(.+?)\s*$", netlist, re.M | re.I)
+    heads = re.findall(r"^\s*\.subckt\s+(\S+)\s+(.+?)\s*$", netlist or "", re.M | re.I)
     if not heads:
-        raise ValueError("netlist has no .subckt header")
+        return (dut_name or "DUT"), ["IN_P", "IN_N", "VCC", "VEE", "OUT"]
     if dut_name:
         for n, p in heads:
             if n.lower() == dut_name.lower():
@@ -39,15 +39,45 @@ def subckt_header(netlist: str, dut_name: Optional[str] = None) -> Tuple[str, Li
     return n, p.split()
 
 
+def _semantic_node_for_pin(pin_str: str, node_of: Dict[str, str], lut: Dict[str, str]) -> Optional[str]:
+    """Resolves a .subckt pin to a fixture node even when pin naming conventions differ
+    (e.g., VCC vs VCC_P vs V+, VEE vs VCC_N vs GND, IN+ vs IN_P vs 1IN+)."""
+    u = pin_str.upper().strip()
+    vals = set(node_of.values())
+    # Negative rail / ground
+    if re.search(r"(^V-$|^VEE$|^VSS$|^GND$|_N$|-|NEG|ANODE)", u) and re.search(r"(^V|CC|DD|EE|SS|GND|NEG|ANODE)", u):
+        if "vn" in vals:
+            return "vn"
+        if "0" in vals:
+            return "0"
+    # Positive rail
+    if re.search(r"(^V\+$|^VCC$|^VDD$|^VS$|_P$|\+|POS)", u) and re.search(r"(^V|CC|DD|VS|POS)", u) and not re.search(r"IN|OUT", u):
+        if "vp" in vals:
+            return "vp"
+    # Non-inverting input
+    if re.search(r"IN", u) and ("+" in u or re.search(r"(_P\b|P$|NONINV)", u)):
+        if "inp" in vals:
+            return "inp"
+    # Inverting input
+    if re.search(r"IN", u) and ("-" in u or re.search(r"(_N\b|N$|(?<!NON)INV)", u)):
+        if "inn" in vals:
+            return "inn"
+    # Output
+    if re.search(r"(^OUT|\bOUT\d*$|^VO$|^VOUT$)", u):
+        if "out" in vals:
+            return "out"
+    return None
+
+
 def instantiate(netlist: str, node_of: Dict[str, str], inst: str = "XDUT", dut_name: Optional[str] = None) -> str:
-    """Builds the X-line, mapping subckt header pins to fixture nodes via sanitized pin names."""
+    """Builds the X-line, mapping subckt header pins to fixture nodes via exact, sanitized, or semantic role names."""
     name, pins = subckt_header(netlist, dut_name)
     def key(p):
         return re.sub(r"[^A-Z0-9]", "", p.upper().replace("+", "P").replace("-", "N"))
     lut = {key(k): v for k, v in node_of.items()}
     nodes = []
     for p in pins:
-        n = node_of.get(p) or lut.get(key(p))
+        n = node_of.get(p) or lut.get(key(p)) or _semantic_node_for_pin(p, node_of, lut)
         nodes.append(n if n else f"nc_{key(p)}")
     return f"{inst} {' '.join(nodes)} {name}"
 
@@ -140,9 +170,23 @@ class FixtureContext:
 
     def ch(self) -> Dict[str, str]:
         chans = self.pm.get("channels") or []
-        if not chans:
-            raise ValueError(f"no complete input/output channel found for class {self.cls}: {self.pm}")
-        return chans[0]
+        if chans:
+            return chans[0]
+        # Soft fallback: infer channel pins from the subckt header pins
+        _, pins = subckt_header(self.netlist, self.dut_name)
+        from .spec_planner import map_pins
+        inferred = map_pins(self.cls, [{"name": p, "raw_name": p} for p in pins])
+        if not self.pm.get("vpos") and inferred.get("vpos"):
+            self.pm["vpos"] = inferred["vpos"]
+        if not self.pm.get("vneg") and inferred.get("vneg"):
+            self.pm["vneg"] = inferred["vneg"]
+        if inferred.get("channels"):
+            self.pm["channels"] = inferred["channels"]
+            return inferred["channels"][0]
+        non_rails = [p for p in pins if p not in (self.pm.get("vpos"), self.pm.get("vneg"))]
+        if len(non_rails) >= 3:
+            return {"inp": non_rails[0], "inn": non_rails[1], "out": non_rails[-1]}
+        return {"inp": "IN_P", "inn": "IN_N", "out": "OUT"}
 
 
 # ============================================================================ OP-AMP / INAMP
@@ -479,10 +523,15 @@ def cmp_tresp(ctx: FixtureContext, key: str, fx: Dict[str, Any]) -> Deck:
 
 # ============================================================================ 555 TIMER
 def _t(ctx: FixtureContext) -> Dict[str, str]:
-    t = ctx.pm.get("timer") or {}
-    for k in ("trig", "thres", "out"):
-        if k not in t:
-            raise ValueError(f"timer pin '{k}' not found in pin map {t}")
+    t = dict(ctx.pm.get("timer") or {})
+    if not {"trig", "thres", "out"} <= set(t):
+        _, pins = subckt_header(ctx.netlist, ctx.dut_name)
+        from .spec_planner import map_pins
+        inferred = map_pins("timer", [{"name": p, "raw_name": p} for p in pins]).get("timer") or {}
+        t.update({k: v for k, v in inferred.items() if k not in t})
+    t.setdefault("trig", "TRIG")
+    t.setdefault("thres", "THRES")
+    t.setdefault("out", "OUT")
     return t
 
 
@@ -639,9 +688,15 @@ def t555_edges(ctx, key, fx):
 
 # ============================================================================ SHUNT REFERENCE (TL431)
 def _s(ctx):
-    s = ctx.pm.get("shunt") or {}
+    s = dict(ctx.pm.get("shunt") or {})
     if not {"cathode", "ref", "anode"} <= set(s):
-        raise ValueError(f"shunt pins incomplete: {s}")
+        _, pins = subckt_header(ctx.netlist, ctx.dut_name)
+        from .spec_planner import map_pins
+        inferred = map_pins("shunt_ref", [{"name": p, "raw_name": p} for p in pins]).get("shunt") or {}
+        s.update({k: v for k, v in inferred.items() if k not in s})
+    s.setdefault("cathode", "CATHODE")
+    s.setdefault("ref", "REF")
+    s.setdefault("anode", "ANODE")
     return s
 
 
@@ -703,9 +758,15 @@ def shunt_zka(ctx, key, fx):
 
 # ============================================================================ LDO (LM317)
 def _l(ctx):
-    l = ctx.pm.get("ldo") or {}
+    l = dict(ctx.pm.get("ldo") or {})
     if not {"in", "out", "adj"} <= set(l):
-        raise ValueError(f"ldo pins incomplete: {l}")
+        _, pins = subckt_header(ctx.netlist, ctx.dut_name)
+        from .spec_planner import map_pins
+        inferred = map_pins("ldo", [{"name": p, "raw_name": p} for p in pins]).get("ldo") or {}
+        l.update({k: v for k, v in inferred.items() if k not in l})
+    l.setdefault("in", "IN")
+    l.setdefault("out", "OUT")
+    l.setdefault("adj", "ADJ")
     return l
 
 
