@@ -467,24 +467,16 @@ class WebCircuitReferenceSearcher:
         if failed_specs:
             spec_str = " " + " ".join(failed_specs[:3])
 
-        # IEEE academic query: focused on circuit architecture, stages, and compensation
-        q_ieee = f"{cat_str} {clean_ic} circuit differential pair transistor compensation topology {extra_query}".strip()
-
-        # Tavily query: engineering schematic and transistor topology
-        q_tavily = (
-            f"{clean_ic} {cat_str} internal circuit schematic transistor topology "
-            f"SPICE model design stages {extra_query}{spec_str}"
-        ).strip()
-
-        # Exa query: focused on SPICE subcircuit netlists and application notes
-        q_exa = (
-            f"{clean_ic} {cat_str} SPICE subcircuit netlist .subckt transistor level "
-            f"equivalent schematic application note {extra_query}"
-        ).strip()
+        # IEEE academic query: concise keywords (long AND queries return 0 results in IEEE Xplore)
+        if "opamp" in cat_str.lower() or "operational" in cat_str.lower():
+            q_ieee = "operational amplifier differential pair"
+        else:
+            q_ieee = f"{cat_str} circuit"
+        if extra_query and len(extra_query.split()) <= 3:
+            q_ieee = f"{q_ieee} {extra_query}".strip()
 
         return self.search(
-            query=q_tavily,
-            exa_query=q_exa,
+            query=q_ieee,
             ieee_query=q_ieee,
             max_results_per_engine=4
         )

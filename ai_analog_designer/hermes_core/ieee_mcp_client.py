@@ -66,6 +66,8 @@ def search_papers_via_mcp(query: str, limit: int = 3, ieee_api_key: str = "") ->
     elif isinstance(raw, list):
         items = raw
     elif isinstance(raw, str) and raw:
+        if "no results" in raw.lower() or "error:" in raw.lower():
+            return []
         # Some MCP servers return formatted text or markdown when non-JSON
         return [{
             "title": f"IEEE MCP Search Results for '{query}'",
