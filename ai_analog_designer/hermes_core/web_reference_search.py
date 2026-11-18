@@ -74,7 +74,22 @@ class WebCircuitReferenceSearcher:
         encoded_q = urllib.parse.quote(clean_q)
         papers: list[dict[str, Any]] = []
 
-        # 1. Primary Query: Official IEEE Xplore API using IEEE_API_KEY
+        # 0. Primary Query: `ieee-xplore-mcp` via MCP ClientSession (stdio)
+        if os.environ.get("ANALOG_USE_IEEE_MCP", "1") == "1":
+            try:
+                from .ieee_mcp_client import search_papers_via_mcp
+                mcp_papers = search_papers_via_mcp(clean_q, limit=max_results, ieee_api_key=self.ieee_api_key)
+                if mcp_papers:
+                    return {
+                        "provider": "ieee_mcp",
+                        "ok": True,
+                        "count": len(mcp_papers),
+                        "papers": mcp_papers,
+                    }
+            except Exception as e:
+                logger.debug(f"IEEE MCP call skipped ({e}); falling back to IEEE Xplore REST API.")
+
+        # 1. Secondary Query: Official IEEE Xplore REST API using IEEE_API_KEY
         url_ieee_api = (
             f"{IEEE_XPLORE_API_URL}?apikey={urllib.parse.quote(self.ieee_api_key)}"
             f"&querytext={encoded_q}&max_records={max_results}"
